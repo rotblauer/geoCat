@@ -107,10 +107,6 @@ def summarize(features, root_output, crs):
 
     return "done with " + root_output
 
-
-# summarizes catTracks from https://catonmap.net for downstream analysis
-# the input is a json file of catTracks piped to stdin
-
 if __name__ == '__main__':
 
     outD = Path(os.getcwd()) / 'output'

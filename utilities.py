@@ -76,8 +76,9 @@ def summarize_by_date(gdf, columns, timestamp_column):
 # returns the dataframe with the new columns, and the names of the new columns
 # takes a geopandas dataframe and a timestamp column name
 def add_date_columns(gdf, timestamp_column):
+    # TODO UTC
     # convert the timestamp column to a datetime
-    gdf[timestamp_column] = pandas.to_datetime(gdf[timestamp_column], format="ISO8601")
+    gdf[timestamp_column] = pandas.to_datetime(gdf[timestamp_column], format="ISO8601", utc=True, errors='coerce')
 
     # extract the day, month, and year from the timestamp column
     gdf['date'] = gdf[timestamp_column].dt.date

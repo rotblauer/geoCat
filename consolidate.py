@@ -1,8 +1,10 @@
-
-
-
 # combine the contents of a list of files into a single pandas dataframe
 # returns the combined dataframe
+import os
+
+import pandas
+
+
 def combine_files(file_paths):
     # create an empty list to hold the dataframes
     dataframes = []
@@ -21,6 +23,7 @@ def combine_files(file_paths):
     # return the combined dataframe
     return combined_dataframe
 
+
 # loads files with a given suffix from a directory
 # returns a list of file paths
 def load_files(directory, suffix):
@@ -36,3 +39,13 @@ def load_files(directory, suffix):
 
     # return the list of file paths
     return file_paths
+
+
+# joins the geopandas dataframe with the pandas dataframe using an id in common
+# returns the joined dataframe
+def join_dataframes(gdf, df, id):
+    # join the dataframes
+    joined_dataframe = gdf.merge(df, on=id)
+
+    # return the joined dataframe
+    return joined_dataframe

@@ -5,6 +5,7 @@ import os
 
 import geopandas
 
+import consolidate
 import lineIterator
 import sys
 from geopandas import GeoDataFrame
@@ -12,16 +13,19 @@ from geopandas import GeoDataFrame
 import utilities
 from concurrent.futures import ProcessPoolExecutor
 
+suffixes = ['_state_count.csv', '_country_count.csv', '_activity_count.csv']
+
+
 def get_state_count_output_file(root_output):
-    return root_output + '_state_count.csv'
+    return root_output + suffixes[0]
 
 
 def get_country_output(root_output):
-    return root_output + '_country_count.csv'
+    return root_output + suffixes[1]
 
 
 def get_activity_count_output_file(root_output):
-    return root_output + '_activity_count.csv'
+    return root_output + suffixes[2]
 
 
 def get_county_columns_to_group_by():
@@ -64,7 +68,7 @@ def summarize(features, root_output, crs):
             # summarize the tracks by state
             summarized_states = utilities.summarize_tracks(gdf, load_features(utilities.get_state_shp(), crs=crs),
                                                            get_county_columns_to_group_by())
-            summarized_states.to_csv(get_state_count_output_file(root_output), header=True)
+            summarized_states.to_csv(get_state_count_output_file(root_output), header=True,index=False)
         # if the country summary file does not exist, create it
         if not os.path.exists(get_country_output(root_output)):
             # summarize the tracks by country
@@ -74,7 +78,7 @@ def summarize(features, root_output, crs):
                                                               load_features(utilities.get_country_shp(),
                                                                             crs=crs).to_crs(crs),
                                                               get_country_columns_to_group_by())
-            summarized_countries.to_csv(get_country_output(root_output), header=True)
+            summarized_countries.to_csv(get_country_output(root_output), header=True, index=False)
 
         # if the activity summary file does not exist, create it
         if not os.path.exists(get_activity_count_output_file(root_output)):
@@ -82,7 +86,8 @@ def summarize(features, root_output, crs):
             # summarize the tracks by activity
             summarized_activities = utilities.summarize_by_date(gdf, get_activity_columns_to_group_by(),
                                                                 timestamp_column='Time')
-            summarized_activities.to_csv(get_activity_count_output_file(root_output), header=True)
+            # do not write the index to the file
+            summarized_activities.to_csv(get_activity_count_output_file(root_output), header=True, index=False)
 
     return "done with " + root_output
 
@@ -111,11 +116,29 @@ def process_tracks(iterator, batch_size, output_dir, crs, workers):
             current_batch += 1
 
 
+def get_combined_output_file(directory, suffix):
+    return directory + suffix + "_combined.csv"
+
+
+# concatenates the results files in a directory into a single file
+# uses the suffix to determine which files to concatenate
+# returns the combined dataframe
+def consolidate_results_files(output_dir):
+    # get the output file
+    for suffix in suffixes:
+        output_file = get_combined_output_file(output_dir, suffix)
+        print("consolidating " + output_file)
+        # if the output file does not exist, create it
+        if not os.path.exists(output_file):
+            # load the files
+            consolidate.combine_and_write(output_dir, suffix, output_file)
+
+
 if __name__ == '__main__':
 
     # parse the command line arguments
     parser = argparse.ArgumentParser(description='Summarizes the tracks in a json file')
-    parser.add_argument('--batch_size', type=int, default=1000000,
+    parser.add_argument('--batch_size', type=int, default=500000,
                         help='the number of features to process at a time')
     parser.add_argument('--output_dir', type=str, default='output',
                         help='the directory to write the output files to')
@@ -127,17 +150,15 @@ if __name__ == '__main__':
                         help='the number of workers to use')
     # argument to skip processing
     parser.add_argument('--skip', action='store_true', help='skip processing if output files exist')
-    # argument to limit memory (RAM)
-    parser.add_argument('--memory_limit', type=int, default=0, help='hard limit memory in megabytes (0 no limit)')
 
     args = parser.parse_args()
 
-    if args.memory_limit != 0:
-        print("Limiting memory to", args.memory_limit, "MB")
-        memory_limit(args.memory_limit)
-
     outD = args.output_dir
+    print("output dir is " + outD)
     if not os.path.exists(outD):
         os.makedirs(outD)
     if not args.skip:
-        process_tracks(lineIterator.LineIterator(sys.stdin), args.batch_size, args.output_dir, args.crs, args.workers)
+        process_tracks(lineIterator.LineIterator(sys.stdin), args.batch_size, args.output_dir, args.crs,
+                       args.workers)
+    print("consolidating results")
+    consolidate_results_files(args.output_dir)

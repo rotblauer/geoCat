@@ -1,0 +1,61 @@
+---
+title: "geoCat"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: scroll
+    social: menu
+    source_code: embed
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+
+library(data.table)
+library(highcharter)
+library(dplyr)
+library(knitr)
+df <- fread("../output/output_state_count.csv_combined.csv")
+
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+
+# function to sum the counts column by a given column name
+sum_by_column <- function(in_df, column_names) {
+  #group by the list of column names and sum the counts column
+  in_df <- in_df[, .(counts = sum(counts)), by = column_names]
+  return(in_df)
+}
+
+
+# kable(sum_by_column(in_df = df, column_names = c("STATE_NAME")))
+
+```
+
+```{r}
+sumByState <-
+  sum_by_column(in_df = df, column_names = c("STATE_NAME"))
+# log10 transform the counts column
+sumByState$counts <- log10(sumByState$counts)
+#create a chlorealpleth map of the US
+highchart() %>%
+  hc_add_series_map(
+    usgeojson,
+    sumByState,
+    value = "counts",
+    joinBy = c("name", "STATE_NAME"),
+    name = "Count",
+    dataLabels = list(enabled = TRUE, format = '{point.name}')
+  ) %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_colorAxis(stops = color_stops()) %>%
+  hc_title(text = "Count of Tracks by State") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_tooltip(pointFormat = "{point.name}: {point.value}")
+
+```

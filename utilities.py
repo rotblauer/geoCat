@@ -129,7 +129,7 @@ def get_state_shp():
 
     # set the shapefile file name
     shapefile_file = os.path.join(census_dir, 'cb_2020_us_county_500k.zip')
-    url = 'https://www2.census.gov/geo/tiger/GENZ2020/shp/cb_2020_us_state_500k.zip'
+    url = 'https://www2.census.gov/geo/tiger/GENZ2020/shp/cb_2020_us_county_500k.zip'
     return download_file(url, shapefile_file)
 
 

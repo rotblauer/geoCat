@@ -16,7 +16,7 @@ import resource
 import platform
 import sys
 
-def memory_limit(gigabytes: int):
+def memory_limit(megabytes: int):
     """
     只在linux操作系统起作用
     """
@@ -24,33 +24,32 @@ def memory_limit(gigabytes: int):
         print('Only works on linux!')
         return
     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-    resource.setrlimit(resource.RLIMIT_AS, (gigabytes * 1024 * 1024 * 1024, soft))
+    resource.setrlimit(resource.RLIMIT_AS, (megabytes * 1024 * 1024, hard))
 
-# def get_memory():
-#     with open('/proc/meminfo', 'r') as mem:
-#         free_memory = 0
-#         for i in mem:
-#             sline = i.split()
-#             if str(sline[0]) in ('MemFree:', 'Buffers:', 'Cached:'):
-#                 free_memory += int(sline[1])
-#     return free_memory
+def get_free_memory():
+    with open('/proc/meminfo', 'r') as mem:
+        free_memory = 0
+        for i in mem:
+            sline = i.split()
+            if str(sline[0]) in ('MemFree:', 'Buffers:', 'Cached:'):
+                free_memory += int(sline[1])
+    return free_memory #KiB
 
-def memory(gigabytes=8):
+def memory_decorator(megabytes=4096):
     def decorator(function):
         def wrapper(*args, **kwargs):
-            memory_limit(gigabytes)
+            memory_limit(megabytes)
             try:
                 return function(*args, **kwargs)
             except MemoryError:
-            #     mem = get_memory() / 1024 /1024
-            #     print('Remain: %.2f GB' % mem)
+                mem = get_free_memory() / 1024 / 1024
+                print('Remain: %.2f GB' % mem)
                 sys.stderr.write('\n\nERROR: Memory Exception\n')
                 sys.exit(1)
         return wrapper
     return decorator
 
-@memory(4)
-
+# @memory_decorator(8000)
 
 def get_state_count_output_file(root_output):
     return root_output + '_state_count.csv'
@@ -131,6 +130,16 @@ def process_tracks(iterator, batch_size, output_dir, crs, workers):
     current_batch = 0
     batch_iterator = utilities.batcher(iterator, batch_size)
 
+    # If workers is 0, do not use concurrent futures executor
+    if workers == 0:
+        for features in batch_iterator:
+            root_output = os.path.join(output_dir,
+                                       "batch." + str(current_batch) + ".size." + str(
+                                           len(features)))
+            completion_callback(summarize(features, root_output, crs))
+            current_batch += 1
+        return
+
     with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
         for features in batch_iterator:
             root_output = os.path.join(output_dir,
@@ -157,7 +166,14 @@ if __name__ == '__main__':
                         help='the number of workers to use')
     # argument to skip processing
     parser.add_argument('--skip', action='store_true', help='skip processing if output files exist')
+    # argument to limit memory (RAM)
+    parser.add_argument('--memory_limit', type=int, default=0, help='hard limit memory in megabytes (0 no limit)')
+
     args = parser.parse_args()
+
+    if args.memory_limit != 0:
+        print("Limiting memory to", args.memory_limit, "MB")
+        memory_limit(args.memory_limit)
 
     outD = args.output_dir
     if not os.path.exists(outD):

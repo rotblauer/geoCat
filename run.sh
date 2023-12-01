@@ -1,4 +1,10 @@
-time cat /Volumes/SandCat/tdata/master.json.gz|zcat|python3 main.py
+#!/usr/bin/env bash
+
+echo "Hello cat world"
+
+path_to_tracks=${1:-/Volumes/SandCat/tdata/master.json.gz}
+
+time cat "${path_to_tracks}"|zcat|python3 main.py --output_dir /tmp/output
 
 # # time cat ~/tdata/last10k.txt|python3 main.py
 

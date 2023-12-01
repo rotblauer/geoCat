@@ -3,7 +3,7 @@
 set -x
 
 time cat /home/ia/tdata/master.json.gz|zcat|\
-  python3 main.py --workers 4 --memory_limit 8000 --batch_size 100000
+  python3 main.py --workers 4
 
 # nice time cat /home/ia/tdata/master.json.gz|zcat|python3
 # prlimit --as=16000000000 time cat /home/ia/tdata/master.json.gz|zcat|python3

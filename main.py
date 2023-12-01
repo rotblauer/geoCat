@@ -12,45 +12,6 @@ from geopandas import GeoDataFrame
 import utilities
 from concurrent.futures import ProcessPoolExecutor
 
-import resource
-import platform
-import sys
-
-def memory_limit(megabytes: int):
-    """
-    只在linux操作系统起作用
-    """
-    if platform.system() != "Linux":
-        print('Only works on linux!')
-        return
-    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-    resource.setrlimit(resource.RLIMIT_AS, (megabytes * 1024 * 1024, hard))
-
-def get_free_memory():
-    with open('/proc/meminfo', 'r') as mem:
-        free_memory = 0
-        for i in mem:
-            sline = i.split()
-            if str(sline[0]) in ('MemFree:', 'Buffers:', 'Cached:'):
-                free_memory += int(sline[1])
-    return free_memory #KiB
-
-def memory_decorator(megabytes=4096):
-    def decorator(function):
-        def wrapper(*args, **kwargs):
-            memory_limit(megabytes)
-            try:
-                return function(*args, **kwargs)
-            except MemoryError:
-                mem = get_free_memory() / 1024 / 1024
-                print('Remain: %.2f GB' % mem)
-                sys.stderr.write('\n\nERROR: Memory Exception\n')
-                sys.exit(1)
-        return wrapper
-    return decorator
-
-# @memory_decorator(8000)
-
 def get_state_count_output_file(root_output):
     return root_output + '_state_count.csv'
 

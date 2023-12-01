@@ -1,0 +1,36 @@
+---
+title: "geoCat"
+output: flexdashboard::flex_dashboard
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+
+library(data.table)
+library(highcharter)
+library(dplyr)
+library(knitr)
+df <- fread("../output/output_state_count.csv_combined.csv")
+
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+
+# function to sum the counts column by a given column name
+sum_by_column <- function(in_df, column_names) {
+  #group by the list of column names and sum the counts column
+  in_df <- in_df[, .(counts = sum(counts)), by = column_names]
+  return(in_df)
+}
+
+
+kable(sum_by_column(in_df = df, column_names = c("STATE_NAME")))
+
+```
+
+```{r}
+
+```

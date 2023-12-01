@@ -1,6 +1,11 @@
 ---
 title: "geoCat"
-output: flexdashboard::flex_dashboard
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: scroll
+    social: menu
+    source_code: embed
 ---
 
 ```{r setup, include=FALSE}
@@ -27,10 +32,30 @@ sum_by_column <- function(in_df, column_names) {
 }
 
 
-kable(sum_by_column(in_df = df, column_names = c("STATE_NAME")))
+# kable(sum_by_column(in_df = df, column_names = c("STATE_NAME")))
 
 ```
 
 ```{r}
+sumByState <-
+  sum_by_column(in_df = df, column_names = c("STATE_NAME"))
+# log10 transform the counts column
+sumByState$counts <- log10(sumByState$counts)
+#create a chlorealpleth map of the US
+highchart() %>%
+  hc_add_series_map(
+    usgeojson,
+    sumByState,
+    value = "counts",
+    joinBy = c("name", "STATE_NAME"),
+    name = "Count",
+    dataLabels = list(enabled = TRUE, format = '{point.name}')
+  ) %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_colorAxis(stops = color_stops()) %>%
+  hc_title(text = "Count of Tracks by State") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_tooltip(pointFormat = "{point.name}: {point.value}")
 
 ```

@@ -1,4 +1,5 @@
 FROM python:3.9
+WORKDIR /myworkdir
 ADD *.py ./
 ADD requirements.txt .
 ADD *.sh ./

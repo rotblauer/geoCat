@@ -62,18 +62,22 @@ def summarize(features, root_output, crs):
     if not results_exist(root_output):
         features = [json.loads(feature) for feature in features]
         gdf = GeoDataFrame.from_features(features, crs=crs)
+
         # if the state summary file does not exist, create it
-        if not os.path.exists(get_state_count_output_file(root_output)):
-            print("summarizing states")
+        state_count_output_file=get_state_count_output_file(root_output)
+        if not os.path.exists(state_count_output_file):
+            print("summarizing states", state_count_output_file)
             # summarize the tracks by state
             summarized_states = utilities.summarize_tracks(gdf, load_features(utilities.get_state_shp(), crs=crs),
                                                            get_county_columns_to_group_by())
             summarized_states.to_csv(get_state_count_output_file(root_output), header=True,index=False)
+
         # if the country summary file does not exist, create it
-        if not os.path.exists(get_country_output(root_output)):
+        country_count_output_file=get_country_output(root_output)
+        if not os.path.exists(country_count_output_file):
             # summarize the tracks by country
 
-            print("summarizing countries")
+            print("summarizing countries", country_count_output_file)
             summarized_countries = utilities.summarize_tracks(gdf,
                                                               load_features(utilities.get_country_shp(),
                                                                             crs=crs).to_crs(crs),
@@ -81,8 +85,9 @@ def summarize(features, root_output, crs):
             summarized_countries.to_csv(get_country_output(root_output), header=True, index=False)
 
         # if the activity summary file does not exist, create it
-        if not os.path.exists(get_activity_count_output_file(root_output)):
-            print("summarizing activities")
+        activity_count_output_file=get_activity_count_output_file(root_output)
+        if not os.path.exists(activity_count_output_file):
+            print("summarizing activities", activity_count_output_file)
             # summarize the tracks by activity
             summarized_activities = utilities.summarize_by_date(gdf, get_activity_columns_to_group_by(),
                                                                 timestamp_column='Time')

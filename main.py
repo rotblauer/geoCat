@@ -29,7 +29,7 @@ def get_activity_count_output_file(root_output):
 
 
 def get_county_columns_to_group_by():
-    return ['STATE_NAME', 'COUNTYFP', 'NAME', 'Name']
+    return ['STATE_NAME','STATEFP', 'COUNTYFP', 'NAME', 'Name']
 
 
 def get_country_columns_to_group_by():

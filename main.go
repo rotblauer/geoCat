@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/kpawlik/geojson"
@@ -44,21 +46,22 @@ func aliasOrName(name string) string {
 // country_name,user,count,latest_date
 // activity,user,count,latest_date
 
+var mapRWLock = sync.RWMutex{}
 var activityGlobal = make(map[string]uint64)
 var activityCat = make(map[string]map[string]uint64)
 
-func tallyMap(m map[string]uint64, k string) {
+func tallyMap(m map[string]uint64, k string, incr uint64) {
 	if _, ok := m[k]; !ok {
 		m[k] = 0
 	}
-	m[k]++
+	m[k] += incr
 }
 
-func tallyMapMap(m map[string]map[string]uint64, k1, k2 string) {
+func tallyMapMap(m map[string]map[string]uint64, k1, k2 string, incr uint64) {
 	if _, ok := m[k1]; !ok {
 		m[k1] = make(map[string]uint64)
 	}
-	tallyMap(m[k1], k2)
+	tallyMap(m[k1], k2, incr)
 }
 
 var storePosFilepath = "/tmp/tallycatpos.txt"
@@ -169,7 +172,7 @@ func GZLines(rawf io.Reader) (chan []byte, chan error, error) {
 	return ch, errs, nil
 }
 
-func tallyCatLine(b []byte) error {
+func tallyCatLine(global map[string]uint64, cat map[string]map[string]uint64, b []byte) error {
 	// fmt.Println(string(b))
 
 	f := geojson.Feature{}
@@ -180,11 +183,11 @@ func tallyCatLine(b []byte) error {
 
 	a, ok := f.Properties["Activity"]
 	if ok {
-		tallyMap(activityGlobal, a.(string))
+		tallyMap(global, a.(string), 1)
 
 		n, ok := f.Properties["Name"]
 		if ok {
-			tallyMapMap(activityCat, aliasOrName(n.(string)), a.(string))
+			tallyMapMap(cat, aliasOrName(n.(string)), a.(string), 1)
 		}
 	}
 	return nil
@@ -212,6 +215,40 @@ func lineCounter(r io.Reader) (int64, error) {
 var flagTargetFilepathDefault = filepath.Join(os.Getenv("HOME"), "tdata", "master.json.gz")
 var flagTargetFilepath = flag.String("target", flagTargetFilepathDefault, "Target filepath")
 
+func tallyBatch(readLines [][]byte) error {
+	var ag = make(map[string]uint64)
+	var ac = make(map[string]map[string]uint64)
+
+	for _, line := range readLines {
+		if err := tallyCatLine(ag, ac, line); err != nil {
+			log.Fatalln(err)
+		}
+	}
+
+	mapRWLock.Lock()
+	defer mapRWLock.Unlock()
+
+	for k, v := range ag {
+		if _, ok := activityGlobal[k]; !ok {
+			activityGlobal[k] = 0
+		}
+		activityGlobal[k] += v
+	}
+	for k, v := range ac {
+		if _, ok := activityCat[k]; !ok {
+			activityCat[k] = make(map[string]uint64)
+		}
+		for kk, vv := range v {
+			if _, ok := activityCat[k][kk]; !ok {
+				activityCat[k][kk] = 0
+			}
+			activityCat[k][kk] += vv
+		}
+	}
+
+	return nil
+}
+
 func main() {
 
 	flag.Parse()
@@ -237,6 +274,7 @@ func main() {
 		log.Fatalln(err)
 	}
 
+	readLines := make([][]byte, 0)
 	n := int64(0)
 readLoop:
 	for {
@@ -247,12 +285,17 @@ readLoop:
 				fmt.Println("First line:", string(line))
 			}
 			n++
-			if err := tallyCatLine(line); err != nil {
-				log.Fatalln(err)
-			}
+			readLines = append(readLines, line)
 			if n%posBatch == 0 {
-				fmt.Printf("Read %d lines\n", n)
+				fmt.Printf("Read %d lines. GOROUTINES=%d\n", n, runtime.NumGoroutine())
+				go tallyBatch(readLines)
+				readLines = make([][]byte, 0)
 			}
+
+			if n > posBatch*1000 {
+				break readLoop
+			}
+
 		case err := <-errCh:
 			if err == io.EOF {
 				break readLoop

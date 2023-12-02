@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -113,92 +112,60 @@ func GZLines(rawf io.Reader) (chan []byte, chan error, error) {
 	return ch, errs, nil
 }
 
-func tallyCatLine(globalActivity map[string]uint64, catActivity map[string]map[string]uint64,
-	globalState map[string]uint64, catState map[string]map[string]uint64,
-	catLast map[string]time.Time, b []byte) error {
+func tallyCatActivity(catActivity map[string]map[string]uint64, catTimes map[string]time.Time, f geojson.Feature) error {
 	// fmt.Println(string(b))
-
-	f := geojson.Feature{}
-	err := json.Unmarshal(b, &f)
-	if err != nil {
-		return err
-	}
 
 	name, nameOk := f.Properties["Name"]
 	if !nameOk {
 		return nil
 	}
-
 	catName := aliasOrName(name.(string))
 
 	t, ok := f.Properties["Time"]
 	if ok {
-		catLast[catName], err = time.Parse(time.RFC3339, t.(string))
+		t, err := time.Parse(time.RFC3339, t.(string))
 		if err != nil {
 			return err
 		}
+		catTimes[catName] = t // overwrite will yield latest for cat name
 	}
 
 	a, ok := f.Properties["Activity"]
 	if ok {
-		tallyMap(globalActivity, a.(string), 1)
 		tallyMapMap(catActivity, catName, a.(string), 1)
 	}
 
-	// {"type":"Feature","id":1,"geometry":{"type":"Point","coordinates":[-122.392033,37.789189]},"properties":{"Accur
-	// acy":0,"Elevation":0,"Heading":0,"Name":"jl","Speed":0,"Time":"2010-05-04T09:15:12Z","UUID":"","UnixTime":1272964512,"Versi
-	// on":""}}
-	pt := f.Point()
-	loc, _ := rg.ReverseGeocode([]float64{pt.Lon(), pt.Lat()})
-	// (rgeo.Location) <Location> San Francisco1, California, United States of America (USA), North America
-	// country := loc.Country
-	state := loc.Province
-	tallyMap(globalState, state, 1)
-	tallyMapMap(catState, catName, state, 1)
-
-	// shp.Open("data/naturalearthdata/ne_50m_admin_0_countries/ne_50m_admin_0_countries.shp")
 	return nil
 }
 
-func tallyBatch(batchN int64, readLines [][]byte) error {
-	err := tallyBatchActivity(batchN, readLines)
-	if err != nil {
-		return err
+func tallyCatActivities(features []geojson.Feature) (counts map[string]map[string]uint64, times map[string]time.Time, err error) {
+	counts = make(map[string]map[string]uint64)
+	times = make(map[string]time.Time)
+	for _, f := range features {
+		if err := tallyCatActivity(counts, times, f); err != nil {
+			log.Fatalln(err)
+		}
 	}
-
-	return nil
+	return counts, times, err
 }
 
-func tallyBatchActivity(batchN int64, readLines [][]byte) error {
-
-	// Activity
-	activityOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_activity_count.csv", batchN, len(readLines)))
+func tallyBatchActivity(batchN int64, features []geojson.Feature) error {
+	activityOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_activity_count.csv", batchN, len(features)))
 
 	// short circuit if file exists
 	if _, err := os.Stat(activityOutputFile); err == nil {
 		log.Println("File exists, skipping:", activityOutputFile)
 		return nil
 	}
-	var acLast = make(map[string]time.Time)
-	var activityG = make(map[string]uint64)
-	var activityC = make(map[string]map[string]uint64)
-	// var countryG = make(map[string]uint64)
-	// var countryC = make(map[string]map[string]uint64)
-	var stateG = make(map[string]uint64)
-	var stateC = make(map[string]map[string]uint64)
 
-	for _, line := range readLines {
-		if err := tallyCatLine(activityG, activityC, stateG, stateC, acLast, line); err != nil {
-			log.Fatalln(err)
-		}
-	}
+	counts, times, err := tallyCatActivities(features)
 
 	writeBuf := bytes.NewBuffer([]byte{})
 	writeBuf.Write([]byte("Activity,Name,date,counts\n")) // header
 
-	for catName, catActivityMap := range activityC {
+	for catName, catActivityMap := range counts {
 		for activity, count := range catActivityMap {
-			p := fmt.Sprintf("%s,%s,%s,%d\n", activity, catName, acLast[catName].Format("2006-01-02"), count)
+			p := fmt.Sprintf("%s,%s,%s,%d\n", activity, catName, times[catName].Format("2006-01-02"), count)
 			// log.Println(p)
 			_, err := writeBuf.Write([]byte(p))
 			if err != nil {
@@ -216,26 +183,122 @@ func tallyBatchActivity(batchN int64, readLines [][]byte) error {
 	_ = f.Close()
 	log.Printf("Wrote %s\n", activityOutputFile)
 
-	mapRWLock.Lock()
-	defer mapRWLock.Unlock()
+	return nil
+}
 
-	for k, v := range activityG {
-		if _, ok := activityGlobal[k]; !ok {
-			activityGlobal[k] = 0
-		}
-		activityGlobal[k] += v
+func tallyCatLoc(catStates, catCountries map[string]map[string]uint64, catTimes map[string]time.Time, f geojson.Feature) error {
+	// fmt.Println(string(b))
+
+	name, nameOk := f.Properties["Name"]
+	if !nameOk {
+		return nil
 	}
-	for k, v := range activityC {
-		if _, ok := activityCat[k]; !ok {
-			activityCat[k] = make(map[string]uint64)
+	catName := aliasOrName(name.(string))
+
+	t, ok := f.Properties["Time"]
+	if ok {
+		t, err := time.Parse(time.RFC3339, t.(string))
+		if err != nil {
+			return err
 		}
-		for kk, vv := range v {
-			if _, ok := activityCat[k][kk]; !ok {
-				activityCat[k][kk] = 0
+		catTimes[catName] = t // overwrite will yield latest for cat name
+	}
+
+	// {"type":"Feature","id":1,"geometry":{"type":"Point","coordinates":[-122.392033,37.789189]},"properties":{"Accur
+	// acy":0,"Elevation":0,"Heading":0,"Name":"jl","Speed":0,"Time":"2010-05-04T09:15:12Z","UUID":"","UnixTime":1272964512,"Versi
+	// on":""}}
+	pt := f.Point()
+
+	loc, _ := rg.ReverseGeocode([]float64{pt.Lon(), pt.Lat()})
+	// => (rgeo.Location) <Location> San Francisco1, California, United States of America (USA), North America
+
+	state := loc.Province
+	country := loc.Country
+
+	tallyMapMap(catStates, catName, state, 1)
+	tallyMapMap(catCountries, catName, country, 1)
+
+	// shp.Open("data/naturalearthdata/ne_50m_admin_0_countries/ne_50m_admin_0_countries.shp")
+	return nil
+}
+
+func tallyCatLocs(features []geojson.Feature) (states map[string]map[string]uint64, countries map[string]map[string]uint64, times map[string]time.Time, err error) {
+	states = make(map[string]map[string]uint64)
+	countries = make(map[string]map[string]uint64)
+	times = make(map[string]time.Time)
+	for _, f := range features {
+		if err := tallyCatLoc(states, countries, times, f); err != nil {
+			log.Fatalln(err)
+		}
+	}
+	return states, countries, times, err
+}
+
+func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
+	stateOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_state_count.csv", batchN, len(features)))
+	countryOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_country_count.csv", batchN, len(features)))
+
+	// short circuit if (state) file exists
+	if _, err := os.Stat(stateOutputFile); err == nil {
+		log.Println("File exists, skipping:", stateOutputFile)
+	} else {
+		states, countries, times, err := tallyCatLocs(features)
+
+		// States
+		writeBuf := bytes.NewBuffer([]byte{})
+		writeBuf.Write([]byte("State,Name,date,counts\n")) // header
+
+		for catName, m := range states {
+			for state, count := range m {
+				p := fmt.Sprintf("%s,%s,%s,%d\n", state, catName, times[catName].Format("2006-01-02"), count)
+				// log.Println(p)
+				_, err := writeBuf.Write([]byte(p))
+				if err != nil {
+					log.Fatalln(err)
+				}
 			}
-			activityCat[k][kk] += vv
 		}
+
+		// writeBuf to file
+		f, err := os.Create(stateOutputFile)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		_, _ = f.Write(writeBuf.Bytes())
+		_ = f.Close()
+		log.Printf("Wrote %s\n", stateOutputFile)
+
+		// Countries
+		writeBuf.Reset()
+		writeBuf.Write([]byte("Country,Name,date,counts\n")) // header
+
+		for catName, m := range countries {
+			for country, count := range m {
+				p := fmt.Sprintf("%s,%s,%s,%d\n", country, catName, times[catName].Format("2006-01-02"), count)
+				// log.Println(p)
+				_, err := writeBuf.Write([]byte(p))
+				if err != nil {
+					log.Fatalln(err)
+				}
+			}
+		}
+
+		// writeBuf to file
+		f, err = os.Create(countryOutputFile)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		_, _ = f.Write(writeBuf.Bytes())
+		_ = f.Close()
+		log.Printf("Wrote %s\n", countryOutputFile)
+
 	}
+	return nil
+}
+
+func tallyBatch(batchN int64, readLines []geojson.Feature) error {
+	go tallyBatchActivity(batchN, readLines)
+	go tallyBatchLoc(batchN, readLines)
 	return nil
 }
 
@@ -260,7 +323,7 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	readLines := make([][]byte, 0)
+	readFeatures := make([]geojson.Feature, 0)
 	n := int64(0)
 readLoop:
 	for {
@@ -274,11 +337,15 @@ readLoop:
 				// on":""}}
 			}
 			n++
-			readLines = append(readLines, line)
+			f, err := geojson.UnmarshalFeature(line)
+			if err != nil {
+				log.Fatalln(err)
+			}
+			readFeatures = append(readFeatures, *f)
 			if n%posBatch == 0 {
 				fmt.Printf("Read %d lines. GOROUTINES=%d\n", n, runtime.NumGoroutine())
-				go tallyBatchActivity(n/posBatch, readLines)
-				readLines = make([][]byte, 0)
+				tallyBatch(n/posBatch, readFeatures)
+				readFeatures = make([]geojson.Feature, 0)
 			}
 
 			if n > posBatch*1000 {

@@ -83,7 +83,6 @@ def find_duplicates(dataframe, columns):
 # sum a column in a pandas dataframe when rows have the same values in a set of columns
 # returns a pandas dataframe with the summed column
 def sum_duplicates(dataframe, columns, column_to_sum):
-
     # find the duplicates
     duplicates = find_duplicates(dataframe, columns)
     # group by the columns and sum the column to sum
@@ -92,10 +91,9 @@ def sum_duplicates(dataframe, columns, column_to_sum):
     # find the rows that are not duplicates
     non_duplicates = dataframe.drop_duplicates(columns, keep=False)
 
-    #combine the non duplicates and the summed duplicates
+    # combine the non duplicates and the summed duplicates
     summed_duplicates = pandas.concat([summed_duplicates, non_duplicates])
     
-
     # return the summed duplicates
     return summed_duplicates
 

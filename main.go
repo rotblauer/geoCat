@@ -19,11 +19,19 @@ import (
 	"github.com/kpawlik/geojson"
 )
 
-const posBatch = 100000
+// city,user,count,latest_date
+// state_name,county,user,count,latest_date
+// country_name,user,count,latest_date
+// activity,user,count,latest_date
 
 func init() {
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
 }
+
+const posBatch = 500000
+
+var flagTargetFilepath = flag.String("target", filepath.Join(os.Getenv("HOME"), "tdata", "master.json.gz"), "Target filepath")
+var flagOutputRootFilepath = flag.String("output-root", filepath.Join(".", "go-output"), "Output root dir")
 
 var aliases = map[*regexp.Regexp]string{
 	regexp.MustCompile(`(?i)(Big.*P.*|Isaac.*|.*moto.*|iha)`): "ia",
@@ -46,11 +54,6 @@ func aliasOrName(name string) string {
 	return name
 }
 
-// city,user,count,latest_date
-// state_name,county,user,count,latest_date
-// country_name,user,count,latest_date
-// activity,user,count,latest_date
-
 var mapRWLock = sync.RWMutex{}
 var activityGlobal = make(map[string]uint64)
 var activityCat = make(map[string]map[string]uint64)
@@ -67,77 +70,6 @@ func tallyMapMap(m map[string]map[string]uint64, k1, k2 string, incr uint64) {
 		m[k1] = make(map[string]uint64)
 	}
 	tallyMap(m[k1], k2, incr)
-}
-
-var storePosFilepath = "/tmp/tallycatpos.txt"
-
-func storePos(pos int64) error {
-	return os.WriteFile(storePosFilepath, []byte(fmt.Sprintf("%d", pos)), 0644)
-}
-
-func getPos() int64 {
-	b, err := os.ReadFile(storePosFilepath)
-	if err != nil {
-		return 0
-	}
-	var pos int64
-	_, _ = fmt.Sscanf(string(b), "%d", &pos)
-	return pos
-}
-
-// func withReader(input io.Reader, start int64, forEach func([]byte) error) error {
-// 	fmt.Println("--READER, start:", start)
-//
-// 	// Doesn't work with stdin.
-// 	// if _, err := input.Seek(start, 0); err != nil {
-// 	// 	return err
-// 	// }
-//
-// 	// r, err := gzran.NewReader(input)
-// 	// if err != nil {
-// 	// 	return err
-// 	// }
-// 	// r := bufio.NewReader(input)
-//
-// 	r, err := gzip.NewReader(input)
-// 	if err != nil {
-// 		return err
-// 	}
-//
-// 	pos := start
-// 	for {
-// 		data, err := r.ReadBytes('\n')
-// 		pos += int64(len(data))
-// 		if pos%posBatch == 0 {
-// 			_ = storePos(pos)
-// 		}
-// 		if err == nil || err == io.EOF {
-// 			if len(data) > 0 && data[len(data)-1] == '\n' {
-// 				data = data[:len(data)-1]
-// 			}
-// 			if len(data) > 0 && data[len(data)-1] == '\r' {
-// 				data = data[:len(data)-1]
-// 			}
-// 			// fmt.Printf("Pos: %d, Read: %s\n", pos, data)
-// 		}
-// 		if err == nil {
-// 			if err := forEach(data); err != nil {
-// 				return err
-// 			}
-// 		}
-// 		if err != nil {
-// 			if err != io.EOF {
-// 				return err
-// 			}
-// 			break
-// 		}
-// 	}
-// 	return nil
-// }
-
-type progress struct {
-	pos   int64
-	total int64
 }
 
 // GZLines iterates over lines of a file that's gzip-compressed.
@@ -177,13 +109,28 @@ func GZLines(rawf io.Reader) (chan []byte, chan error, error) {
 	return ch, errs, nil
 }
 
-func tallyCatLine(global map[string]uint64, cat map[string]map[string]uint64, b []byte) error {
+func tallyCatLine(global map[string]uint64, cat map[string]map[string]uint64, catLast map[string]time.Time, b []byte) error {
 	// fmt.Println(string(b))
 
 	f := geojson.Feature{}
 	err := json.Unmarshal(b, &f)
 	if err != nil {
 		return err
+	}
+
+	name, nameOk := f.Properties["Name"]
+	if !nameOk {
+		return nil
+	}
+
+	catName := aliasOrName(name.(string))
+
+	t, ok := f.Properties["Time"]
+	if ok {
+		catLast[catName], err = time.Parse(time.RFC3339, t.(string))
+		if err != nil {
+			return err
+		}
 	}
 
 	a, ok := f.Properties["Activity"]
@@ -198,37 +145,48 @@ func tallyCatLine(global map[string]uint64, cat map[string]map[string]uint64, b 
 	return nil
 }
 
-func lineCounter(r io.Reader) (int64, error) {
-	buf := make([]byte, 32*1024)
-	count := int64(0)
-	lineSep := []byte{'\n'}
+func tallyBatch(batchN int64, readLines [][]byte) error {
 
-	for {
-		c, err := r.Read(buf)
-		count += int64(bytes.Count(buf[:c], lineSep))
+	outputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_activity_count.csv", batchN, len(readLines)))
 
-		switch {
-		case err == io.EOF:
-			return count, nil
-
-		case err != nil:
-			return count, err
-		}
+	// short circuit if file exists
+	if _, err := os.Stat(outputFile); err == nil {
+		log.Println("File exists, skipping:", outputFile)
+		return nil
 	}
-}
 
-var flagTargetFilepathDefault = filepath.Join(os.Getenv("HOME"), "tdata", "master.json.gz")
-var flagTargetFilepath = flag.String("target", flagTargetFilepathDefault, "Target filepath")
-
-func tallyBatch(readLines [][]byte) error {
 	var ag = make(map[string]uint64)
 	var ac = make(map[string]map[string]uint64)
+	var acLast = make(map[string]time.Time)
 
 	for _, line := range readLines {
-		if err := tallyCatLine(ag, ac, line); err != nil {
+		if err := tallyCatLine(ag, ac, acLast, line); err != nil {
 			log.Fatalln(err)
 		}
 	}
+
+	writeBuf := bytes.NewBuffer([]byte{})
+	writeBuf.Write([]byte("Activity,Name,date,counts\n")) // header
+
+	for catName, catActivityMap := range ac {
+		for activity, count := range catActivityMap {
+			p := fmt.Sprintf("%s,%s,%s,%d\n", activity, catName, acLast[catName].Format("2006-01-02"), count)
+			// log.Println(p)
+			_, err := writeBuf.Write([]byte(p))
+			if err != nil {
+				log.Fatalln(err)
+			}
+		}
+	}
+
+	// writeBuf to file
+	f, err := os.Create(outputFile)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	_, _ = f.Write(writeBuf.Bytes())
+	_ = f.Close()
+	log.Printf("Wrote %s\n", outputFile)
 
 	mapRWLock.Lock()
 	defer mapRWLock.Unlock()
@@ -258,6 +216,8 @@ func main() {
 
 	flag.Parse()
 
+	_ = os.MkdirAll(*flagOutputRootFilepath, 0755)
+
 	// Read all the file into memory.
 	readStart := time.Now()
 	bs, err := os.ReadFile(*flagTargetFilepath)
@@ -266,14 +226,8 @@ func main() {
 	}
 	log.Printf("Read %d bytes in %s\n", len(bs), time.Since(readStart))
 
-	// bufCount := bytes.NewBuffer(bs)
-	// count, err := lineCounter(bufCount)
-	// if err != nil {
-	// 	log.Fatalln(err)
-	// }
 	buf := bytes.NewBuffer(bs)
 
-	// withReader(buf /* getPos() */, 0, tallyCatLine)
 	lineCh, errCh, err := GZLines(buf)
 	if err != nil {
 		log.Fatalln(err)
@@ -293,7 +247,7 @@ readLoop:
 			readLines = append(readLines, line)
 			if n%posBatch == 0 {
 				fmt.Printf("Read %d lines. GOROUTINES=%d\n", n, runtime.NumGoroutine())
-				go tallyBatch(readLines)
+				go tallyBatch(n/posBatch, readLines)
 				readLines = make([][]byte, 0)
 			}
 

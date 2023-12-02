@@ -6,8 +6,10 @@ trap 'last_command=$current_command; current_command=$BASH_COMMAND' DEBUG
 # echo an error message before exiting
 trap 'echo "\"${last_command}\" command filed with exit code $?."' EXIT
 
-time cat /Volumes/SandCat/tdata/master.json.gz|zcat| python3 main.py
-time cat /Volumes/SandCat/tdata/master.json.gz|zcat|python3 main.py --skip
+path_to_tracks=${1:-/Volumes/SandCat/tdata/master.json.gz}
+
+time cat "${path_to_tracks}"|zcat|python3 main.py --output_dir /tmp/output
+time cat "${path_to_tracks}"|zcat|python3 main.py --output_dir /tmp/output --skip
 
 
 # # time cat ~/tdata/last10k.txt|python3 main.py

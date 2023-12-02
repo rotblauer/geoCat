@@ -96,6 +96,16 @@ def process_tracks(iterator, batch_size, output_dir, crs, workers):
     current_batch = 0
     batch_iterator = utilities.batcher(iterator, batch_size)
 
+    # If workers is 0, do not use concurrent futures executor
+    if workers == 0:
+        for features in batch_iterator:
+            root_output = os.path.join(output_dir,
+                                       "batch." + str(current_batch) + ".size." + str(
+                                           len(features)))
+            completion_callback(summarize(features, root_output, crs))
+            current_batch += 1
+        return
+
     with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
         for features in batch_iterator:
             root_output = os.path.join(output_dir,
@@ -140,6 +150,7 @@ if __name__ == '__main__':
                         help='the number of workers to use')
     # argument to skip processing
     parser.add_argument('--skip', action='store_true', help='skip processing if output files exist')
+
     args = parser.parse_args()
 
     outD = args.output_dir

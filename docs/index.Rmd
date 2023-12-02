@@ -71,6 +71,7 @@ highchart() %>%
 ### Count of Tracks by County
 
 ```{r}
+# TODO where is California counties
 df$COUNTY_FIP=paste0(df$STATEFP,df$COUNTYFP)
 sumByCounty <-
   sum_by_column(in_df = df, column_names = c("COUNTY_FIP"))

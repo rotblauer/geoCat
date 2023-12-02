@@ -16,9 +16,19 @@ library(data.table)
 library(highcharter)
 library(dplyr)
 library(knitr)
-df <- fread("../output/output_state_count.csv_combined.csv")
+library(maps)
+data("county.fips")
+data("uscountygeojson")
+data("usgeojson")
+
+#the COUNTYFP column is a character column, so we don't want to convert it to numeric
+# df <- fread("../output/output_county_count.csv_combined.csv", colClasses = c("COUNTYFP" = "character"))
+df <- fread("../output/output_state_count.csv_combined.csv", colClasses = c("COUNTYFP" = "character"))
 
 ```
+
+Column {data-width=650}
+-----------------------------------------------------------------------
 
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
@@ -31,11 +41,9 @@ sum_by_column <- function(in_df, column_names) {
   return(in_df)
 }
 
-
-# kable(sum_by_column(in_df = df, column_names = c("STATE_NAME")))
-
 ```
 
+### Count of Tracks by State
 ```{r}
 sumByState <-
   sum_by_column(in_df = df, column_names = c("STATE_NAME"))
@@ -57,5 +65,33 @@ highchart() %>%
   hc_add_theme(hc_theme_smpl()) %>%
   hc_legend(enabled = FALSE) %>%
   hc_tooltip(pointFormat = "{point.name}: {point.value}")
+
+```
+
+### Count of Tracks by County
+
+```{r}
+df$COUNTY_FIP=paste0(df$STATEFP,df$COUNTYFP)
+sumByCounty <-
+  sum_by_column(in_df = df, column_names = c("COUNTY_FIP"))
+# log10 transform the counts column
+sumByCounty$counts <- log10(sumByCounty$counts)
+#create a chlorealpleth map of the US
+highchart() %>%
+  hc_add_series_map(
+    uscountygeojson,
+    sumByCounty,
+    value = "counts",
+    joinBy = c("fips", "COUNTY_FIP"),
+    name = "Count",
+    dataLabels = list(enabled = TRUE, format = '{point.name}')
+  ) %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_colorAxis(stops = color_stops()) %>%
+  hc_title(text = "Count of Tracks by County") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) 
+# %>%
+#   hc_tooltip(pointFormat = "{point.name}: {point.value}")
 
 ```

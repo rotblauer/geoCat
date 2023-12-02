@@ -14,4 +14,3 @@ time cat "${path_to_tracks}"|zcat|python3 main.py --output_dir $output_dir
 time cat "${path_to_tracks}"|zcat|python3 main.py --output_dir $output_dir --skip
 
 
-# ./run.sh /Volumes/SandCat/tdata/master.json.gz output

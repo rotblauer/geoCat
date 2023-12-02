@@ -2,12 +2,16 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
+	"time"
 
 	"github.com/kpawlik/geojson"
 )
@@ -68,7 +72,7 @@ func getPos() int64 {
 	return pos
 }
 
-func withReader(input io.ReadSeeker, start int64, forEach func([]byte) error) error {
+func withReader(input io.Reader, start int64, forEach func([]byte) error) error {
 	fmt.Println("--READER, start:", start)
 
 	// Doesn't work with stdin.
@@ -129,8 +133,24 @@ func tallyCatLine(b []byte) error {
 	return nil
 }
 
+var flagTargetFilepathDefault = filepath.Join(os.Getenv("HOME"), "tdata", "master.json.gz")
+var flagTargetFilepath = flag.String("target", flagTargetFilepathDefault, "Target filepath")
+
 func main() {
-	withReader(os.Stdin /* getPos() */, 0, tallyCatLine)
+
+	flag.Parse()
+
+	// Read all of the file into memory.
+	readStart := time.Now()
+	bs, err := os.ReadFile(*flagTargetFilepath)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	log.Printf("Read %d bytes in %s\n", len(bs), time.Since(readStart))
+
+	buf := bytes.NewBuffer(bs)
+
+	withReader(buf /* getPos() */, 0, tallyCatLine)
 
 	fmt.Println("Global")
 	for k, v := range activityGlobal {

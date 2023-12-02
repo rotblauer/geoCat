@@ -54,11 +54,13 @@ def load_files(directory, suffix):
 def combine_and_write(directory, suffix, output_file):
     # load the file paths
     file_paths = load_files(directory, suffix)
+    print("found " + str(len(file_paths)) + " files for suffix " + suffix)
 
     # combine the files into a single dataframe
     combined_dataframe = combine_files(file_paths)
 
     # sums duplicates in all columns except the counts column
+
     summed_duplicates = sum_duplicates(combined_dataframe, list(combined_dataframe.columns[:-1]), 'counts')
 
     # write the dataframe to a csv file in the output directory
@@ -81,6 +83,9 @@ def find_duplicates(dataframe, columns):
 # sum a column in a pandas dataframe when rows have the same values in a set of columns
 # returns a pandas dataframe with the summed column
 def sum_duplicates(dataframe, columns, column_to_sum):
+    # TODO this is a problem because it skips non duplicate rows
+    # it skips michigan trip
+
     # find the duplicates
     duplicates = find_duplicates(dataframe, columns)
     # group by the columns and sum the column to sum

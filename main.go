@@ -26,10 +26,15 @@ func init() {
 }
 
 var aliases = map[*regexp.Regexp]string{
-	regexp.MustCompile(`(?i)(Big.*P.*|Isaac.*|moto)`): "ia",
-	regexp.MustCompile("(?i)Rye.*"):                   "jl",
-	regexp.MustCompile("(?i)Bob.*"):                   "bob",
-	regexp.MustCompile("(?i)Ric"):                     "ric",
+	regexp.MustCompile(`(?i)(Big.*P.*|Isaac.*|.*moto.*|iha)`): "ia",
+	regexp.MustCompile(`(?i)(Big.*Ma.*)`):                     "jr",
+	regexp.MustCompile("(?i)(Rye.*|Kitty.*)"):                 "jl",
+	regexp.MustCompile("(?i)Kayleigh.*"):                      "kd",
+	regexp.MustCompile("(?i)(KK.*|kek)"):                      "kk",
+	regexp.MustCompile("(?i)Bob.*"):                           "rj",
+	regexp.MustCompile("(?i)(Pam.*|Rathbone.*)"):              "pr",
+	regexp.MustCompile("(?i)Ric"):                             "ric",
+	regexp.MustCompile("(?i)Twenty7.*"):                       "mat",
 }
 
 func aliasOrName(name string) string {

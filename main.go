@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,7 +17,11 @@ import (
 	"github.com/kpawlik/geojson"
 )
 
-const posBatch = 10000000
+const posBatch = 100000
+
+func init() {
+	log.SetFlags(log.Lshortfile | log.LstdFlags)
+}
 
 var aliases = map[*regexp.Regexp]string{
 	regexp.MustCompile(`(?i)(Big.*P.*|Isaac.*|moto)`): "ia",
@@ -72,44 +77,96 @@ func getPos() int64 {
 	return pos
 }
 
-func withReader(input io.Reader, start int64, forEach func([]byte) error) error {
-	fmt.Println("--READER, start:", start)
+// func withReader(input io.Reader, start int64, forEach func([]byte) error) error {
+// 	fmt.Println("--READER, start:", start)
+//
+// 	// Doesn't work with stdin.
+// 	// if _, err := input.Seek(start, 0); err != nil {
+// 	// 	return err
+// 	// }
+//
+// 	// r, err := gzran.NewReader(input)
+// 	// if err != nil {
+// 	// 	return err
+// 	// }
+// 	// r := bufio.NewReader(input)
+//
+// 	r, err := gzip.NewReader(input)
+// 	if err != nil {
+// 		return err
+// 	}
+//
+// 	pos := start
+// 	for {
+// 		data, err := r.ReadBytes('\n')
+// 		pos += int64(len(data))
+// 		if pos%posBatch == 0 {
+// 			_ = storePos(pos)
+// 		}
+// 		if err == nil || err == io.EOF {
+// 			if len(data) > 0 && data[len(data)-1] == '\n' {
+// 				data = data[:len(data)-1]
+// 			}
+// 			if len(data) > 0 && data[len(data)-1] == '\r' {
+// 				data = data[:len(data)-1]
+// 			}
+// 			// fmt.Printf("Pos: %d, Read: %s\n", pos, data)
+// 		}
+// 		if err == nil {
+// 			if err := forEach(data); err != nil {
+// 				return err
+// 			}
+// 		}
+// 		if err != nil {
+// 			if err != io.EOF {
+// 				return err
+// 			}
+// 			break
+// 		}
+// 	}
+// 	return nil
+// }
 
-	// Doesn't work with stdin.
-	// if _, err := input.Seek(start, 0); err != nil {
-	// 	return err
-	// }
+type progress struct {
+	pos   int64
+	total int64
+}
 
-	r := bufio.NewReader(input)
-	pos := start
-	for {
-		data, err := r.ReadBytes('\n')
-		pos += int64(len(data))
-		if pos%posBatch == 0 {
-			_ = storePos(pos)
-		}
-		if err == nil || err == io.EOF {
-			if len(data) > 0 && data[len(data)-1] == '\n' {
-				data = data[:len(data)-1]
-			}
-			if len(data) > 0 && data[len(data)-1] == '\r' {
-				data = data[:len(data)-1]
-			}
-			// fmt.Printf("Pos: %d, Read: %s\n", pos, data)
-		}
-		if err == nil {
-			if err := forEach(data); err != nil {
-				return err
-			}
-		}
-		if err != nil {
-			if err != io.EOF {
-				return err
-			}
-			break
-		}
+// GZLines iterates over lines of a file that's gzip-compressed.
+// Iterating lines of an io.Reader is one of those things that Go
+// makes needlessly complex.
+// https://gist.github.com/lovasoa/38a207ecdefa1d60225403a644800818
+func GZLines(rawf io.Reader) (chan []byte, chan error, error) {
+	rawContents, err := gzip.NewReader(rawf)
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil
+
+	bufferedContents := bufio.NewReaderSize(rawContents, 1024*1024*1024*8) // default 4096
+
+	ch := make(chan []byte)
+	errs := make(chan error)
+
+	go func(ch chan []byte, errs chan error, contents *bufio.Reader) {
+		defer func(ch chan []byte, errs chan error) {
+			close(ch)
+			close(errs)
+		}(ch, errs)
+
+		for {
+			line, err := contents.ReadBytes('\n')
+			if err != nil {
+				errs <- err
+				if err != io.EOF {
+					return
+				}
+			} else {
+				ch <- line
+			}
+		}
+	}(ch, errs, bufferedContents)
+
+	return ch, errs, nil
 }
 
 func tallyCatLine(b []byte) error {
@@ -118,7 +175,7 @@ func tallyCatLine(b []byte) error {
 	f := geojson.Feature{}
 	err := json.Unmarshal(b, &f)
 	if err != nil {
-		log.Fatalln(err)
+		return err
 	}
 
 	a, ok := f.Properties["Activity"]
@@ -133,6 +190,25 @@ func tallyCatLine(b []byte) error {
 	return nil
 }
 
+func lineCounter(r io.Reader) (int64, error) {
+	buf := make([]byte, 32*1024)
+	count := int64(0)
+	lineSep := []byte{'\n'}
+
+	for {
+		c, err := r.Read(buf)
+		count += int64(bytes.Count(buf[:c], lineSep))
+
+		switch {
+		case err == io.EOF:
+			return count, nil
+
+		case err != nil:
+			return count, err
+		}
+	}
+}
+
 var flagTargetFilepathDefault = filepath.Join(os.Getenv("HOME"), "tdata", "master.json.gz")
 var flagTargetFilepath = flag.String("target", flagTargetFilepathDefault, "Target filepath")
 
@@ -140,7 +216,7 @@ func main() {
 
 	flag.Parse()
 
-	// Read all of the file into memory.
+	// Read all the file into memory.
 	readStart := time.Now()
 	bs, err := os.ReadFile(*flagTargetFilepath)
 	if err != nil {
@@ -148,9 +224,42 @@ func main() {
 	}
 	log.Printf("Read %d bytes in %s\n", len(bs), time.Since(readStart))
 
+	// bufCount := bytes.NewBuffer(bs)
+	// count, err := lineCounter(bufCount)
+	// if err != nil {
+	// 	log.Fatalln(err)
+	// }
 	buf := bytes.NewBuffer(bs)
 
-	withReader(buf /* getPos() */, 0, tallyCatLine)
+	// withReader(buf /* getPos() */, 0, tallyCatLine)
+	lineCh, errCh, err := GZLines(buf)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	n := int64(0)
+readLoop:
+	for {
+		select {
+
+		case line := <-lineCh:
+			if n == 0 {
+				fmt.Println("First line:", string(line))
+			}
+			n++
+			if err := tallyCatLine(line); err != nil {
+				log.Fatalln(err)
+			}
+			if n%posBatch == 0 {
+				fmt.Printf("Read %d lines\n", n)
+			}
+		case err := <-errCh:
+			if err == io.EOF {
+				break readLoop
+			}
+			log.Fatal(err)
+		}
+	}
 
 	fmt.Println("Global")
 	for k, v := range activityGlobal {

@@ -1,2 +1,4 @@
 github.com/kpawlik/geojson v0.0.0-20171201195549-1a4f120c6b41 h1:hmhQApZRZctFnYW02XZBC9jKR31R7c4QbXbqBtQGZeg=
 github.com/kpawlik/geojson v0.0.0-20171201195549-1a4f120c6b41/go.mod h1:qKaqI0FuzSzLI6RtBrhVXqM5wjknuGYU2e8KVG+Z1MM=
+github.com/timpalpant/gzran v0.0.0-20201127163450-7b631e56f57b h1:BbST6DwxZOOs2SlOn0T4ueIEOzrFfs/0gZZLjbWrIoY=
+github.com/timpalpant/gzran v0.0.0-20201127163450-7b631e56f57b/go.mod h1:yTxMuBKYLrj6gYYtK3gK0ifBhjiBYtD3URZiNK7vBt0=

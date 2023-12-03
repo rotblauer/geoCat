@@ -2,7 +2,7 @@
 title: "geoCat"
 output: 
   flexdashboard::flex_dashboard:
-    orientation: columns
+    orientation: rows
     vertical_layout: scroll
     social: menu
     source_code: embed
@@ -10,9 +10,9 @@ output:
 
 # accuracy not vetted
 
-Use these results without warranty or express or implied fitness for any purpose.  The results are not vetted for accuracy.  The results are not vetted for completeness.  The results are not vetted for usability. So says siri
+Use these results without warranty or express or implied fitness for any purpose.  The results are not vetted for accuracy.  The results are not vetted for completeness.  The results are not vetted for usability
 
-Limited to results from IACat and RyeCat. so says siri
+- Limited to results from IACat and RyeCat
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
@@ -38,25 +38,36 @@ df <-
 # create a vector of the names that need to be mapped
 namesToMap <- c("Rye8", "RyePhone", "Rye13")
 # replace the names in the Name column with "RyeCat"
+# if the names are not in the Name column, throw a warning
+if(any(!namesToMap %in% df$Name)) warning("Some names are not in the data frame")
+
+df$OriginalName <- df$Name
 df$Name[df$Name %in% namesToMap] <- "RyeCat"
+
+
+
 # get the names that start with sofia or that contain Papa or that start with tonga
 tongaNames <- df$Name[grepl("^tonga", df$Name, ignore.case = TRUE)]
 papaNames <- df$Name[grepl("papa", df$Name, ignore.case = TRUE)]
 sofiaNames <- df$Name[grepl("^sofia", df$Name, ignore.case = TRUE)]
 IACatNames <- c(tongaNames, papaNames, sofiaNames, "iha")
+iaCatPatterns= c("^tonga", "papa", "^sofia", "iha")
+
 # map the IACatNames to IACat
 df$Name[df$Name %in% IACatNames] <- "IACat"
 
+# print the unique names that are not RyeCat or IACat
+# kable(table()
+missingNames <- unique(df$Name[!df$Name %in% c("RyeCat", "IACat")])
+
+
 # subset the data frame to only include the rows where the Name column is equal to "RyeCat" or "IACat"
 df <- df[Name %in% c("RyeCat", "IACat"), ]
-```
 
-Column {data-width=650}
------------------------------------------------------------------------
+```
 
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
-
 
 # function to sum the counts column by a given column name
 sum_by_column <- function(in_df, column_names) {
@@ -67,7 +78,12 @@ sum_by_column <- function(in_df, column_names) {
 
 ```
 
-### Count of Tracks by State
+Row 
+-------------------------------------
+    
+
+   
+### Total Cats per State
 ```{r}
 sumByState <-
   sum_by_column(in_df = df, column_names = c("STATE_NAME"))
@@ -87,7 +103,7 @@ highchart() %>%
   hc_colorAxis(stops = color_stops()) %>%
   hc_title(text = "Count of Tracks by State") %>%
   hc_add_theme(hc_theme_smpl()) %>%
-  hc_legend(enabled = FALSE) %>%
+  hc_legend(enabled = TRUE) %>%
   hc_tooltip(pointFormat = "{point.name}: {point.value}")
 
 ```
@@ -101,15 +117,12 @@ sumByCatState <-
 
 sumByCatState <- sumByCatState[,.SD[which.max(counts)], by = STATE_NAME]
 
-
-# sumByCatState$counts <- log10(sumByCatState$counts)
-sumByCatState$color <- sumByCatState$Name
 # create a color palette that maps RyeCat to bl
 colorPalette <- c("#0000FF","#FF0000")
 # create a named vector of colors
 colorVector <- setNames(colorPalette, unique(sumByCatState$Name))
 # replace the color column with the color vector
-sumByCatState$color <- colorVector[sumByCatState$color]
+sumByCatState$color <- colorVector[sumByCatState$Name]
 # log10 transform the counts column
 #create a chlorealpleth map of the US
 highchart() %>%
@@ -118,8 +131,8 @@ highchart() %>%
     sumByCatState,
     value = "counts",
     joinBy = c("name", "STATE_NAME"),
-    name = "Name",
-    dataLabels = list(enabled = TRUE, format = '{point.name}')
+    name = "Cat Winner",
+    dataLabels = list(enabled = TRUE, format = '{point.name}'),color =colorVector
   ) %>%
   hc_mapNavigation(enabled = TRUE) %>%
   hc_title(text = "Which Cat Wins Which State") %>%
@@ -130,9 +143,14 @@ highchart() %>%
 
 ```
 
+
 ### States Won per Cat
 
+Includes DC
+
 ```{r}
+
+
 # count the number of states that each cat won
 total = sumByCatState[, .N, by = Name]
 # create a bar chart of the number of states that each cat won
@@ -153,6 +171,11 @@ highchart() %>%
 
 
 ```
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+
 ### Count of Tracks by County
 
 
@@ -179,5 +202,22 @@ highchart() %>%
   hc_legend(enabled = FALSE) 
 # %>%
 #   hc_tooltip(pointFormat = "{point.name}: {point.value}")
+
+```
+
+
+### cats represented in the analysis
+
+```{r}
+
+kable(unique(df$OriginalName))
+
+```
+
+### cats not represented in the analysis
+
+
+```{r}
+kable(missingNames)
 
 ```

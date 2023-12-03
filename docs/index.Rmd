@@ -24,6 +24,9 @@ data("usgeojson")
 #the COUNTYFP column is a character column, so we don't want to convert it to numeric
 # df <- fread("../output/output_county_count.csv_combined.csv", colClasses = c("COUNTYFP" = "character"))
 df <- fread("../output/output_state_count.csv_combined.csv", colClasses = c("COUNTYFP" = "character"))
+test=df[which(df$STATE_NAME=="Wisconsin"),]
+# order the data frame by the counts column
+test= test[order(-test$counts),]
 
 ```
 
@@ -70,6 +73,9 @@ highchart() %>%
 
 ### Count of Tracks by County
 
+polygons may not capture water like wisconsin apostle islands
+
+
 ```{r}
 # TODO where is California counties
 df$COUNTY_FIP=paste0(df$STATEFP,df$COUNTYFP)
@@ -96,7 +102,6 @@ highchart() %>%
 ```
 
 
-### which cat wins which state
 
 ```{r}
 # map the Names "Rye8" "RyePhone" and "Rye13" to "RyeCat"
@@ -134,7 +139,7 @@ df <- df[counts.x == counts.y, ]
 # create a color column that is equal to the name column
 df$color <- df$Name
 # create a color palette that maps RyeCat to bl
-colorPalette <- c("#FF0000", "#0000FF")
+colorPalette <- c("#0000FF","#FF0000")
 # create a named vector of colors
 colorVector <- setNames(colorPalette, unique(df$Name))
 # replace the color column with the color vector

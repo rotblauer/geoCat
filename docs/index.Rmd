@@ -101,7 +101,7 @@ highchart() %>%
 
 ```
 
-
+### cat counts
 
 ```{r}
 # map the Names "Rye8" "RyePhone" and "Rye13" to "RyeCat"
@@ -129,7 +129,7 @@ df <- df[Name %in% c("RyeCat", "iacat"), ]
 # the column Name contains the name of the cat
 # the column counts contains the number of tracks
 # create a color for the Name column with the most counts in each state
-
+dfOriginal <- df
 # get the max count for each state
 maxByState <- df[, .(counts = max(counts)), by = c("STATE_NAME")]
 # merge the max count back to the original data frame
@@ -162,6 +162,27 @@ highchart() %>%
   hc_add_theme(hc_theme_smpl()) %>%
   hc_legend(enabled = FALSE) %>%
   hc_tooltip(pointFormat = "{point.name} is won by {point.Name}: {point.value}")
+
+```
+
+### cat counts
+
+```{r}
+# bar chart of number of states won by each cat
+# count the number of states won by each cat
+countByCat <- df[, .(counts = .N), by = c("Name")]
+# create a bar chart of the number of states won by each cat
+highchart() %>%
+  hc_add_series(
+    countByCat,
+    type = "bar",
+    hcaes(x = Name, y = counts),
+    name = "Count"
+  ) %>%
+  hc_title(text = "Number of States Won by Each Cat") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_tooltip(pointFormat = "{point.Name} won {point.counts} states")
 
 
   

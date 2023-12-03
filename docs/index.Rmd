@@ -102,7 +102,7 @@ sumByCatState <-
 sumByCatState <- sumByCatState[,.SD[which.max(counts)], by = STATE_NAME]
 
 
-sumByCatState$counts <- log10(sumByCatState$counts)
+# sumByCatState$counts <- log10(sumByCatState$counts)
 sumByCatState$color <- sumByCatState$Name
 # create a color palette that maps RyeCat to bl
 colorPalette <- c("#0000FF","#FF0000")
@@ -118,19 +118,41 @@ highchart() %>%
     sumByCatState,
     value = "counts",
     joinBy = c("name", "STATE_NAME"),
-    name = "Count",
+    name = "Name",
     dataLabels = list(enabled = TRUE, format = '{point.name}')
   ) %>%
   hc_mapNavigation(enabled = TRUE) %>%
-  hc_colorAxis(stops = color_stops()) %>%
   hc_title(text = "Which Cat Wins Which State") %>%
   hc_add_theme(hc_theme_smpl()) %>%
   hc_legend(enabled = FALSE) %>%
-  hc_tooltip(pointFormat = "{point.name} is won by {point.Name}: {point.value}")
+  hc_tooltip(pointFormat = "{point.name} is won by {point.Name}: {point.value} total tracks")
 
 
 ```
 
+### States Won per Cat
+
+```{r}
+# count the number of states that each cat won
+total = sumByCatState[, .N, by = Name]
+# create a bar chart of the number of states that each cat won
+# label by the cat name
+highchart() %>%
+  hc_add_series(
+    total,
+    type = "bar",
+    hcaes(x = Name, y = N),
+    name = "States Won",
+    dataLabels = list(enabled = TRUE, format = '{point.Name}')
+  ) %>%
+  hc_title(text = "States Won per Cat") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_tooltip(pointFormat = "{point.Name} won {point.N} states")
+
+
+
+```
 ### Count of Tracks by County
 
 

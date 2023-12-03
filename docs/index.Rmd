@@ -84,9 +84,7 @@ highchart() %>%
     sumByCounty,
     value = "counts",
     joinBy = c("fips", "COUNTY_FIP"),
-    name = "Count",
-    dataLabels = list(enabled = TRUE, format = '{point.name}')
-  ) %>%
+    name = "Count") %>%
   hc_mapNavigation(enabled = TRUE) %>%
   hc_colorAxis(stops = color_stops()) %>%
   hc_title(text = "Count of Tracks by County") %>%
@@ -96,3 +94,10 @@ highchart() %>%
 #   hc_tooltip(pointFormat = "{point.name}: {point.value}")
 
 ```
+
+
+### which cat wins which state
+
+```{r}
+# TODO count most tracks per state and color by cat
+  

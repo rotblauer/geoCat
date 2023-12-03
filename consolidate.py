@@ -93,7 +93,7 @@ def sum_duplicates(dataframe, columns, column_to_sum):
 
     # combine the non duplicates and the summed duplicates
     summed_duplicates = pandas.concat([summed_duplicates, non_duplicates])
-    
+
     # return the summed duplicates
     return summed_duplicates
 

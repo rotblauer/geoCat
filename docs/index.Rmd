@@ -12,6 +12,7 @@ output:
 
 Use these results without warranty or express or implied fitness for any purpose.  The results are not vetted for accuracy.  The results are not vetted for completeness.  The results are not vetted for usability. So says siri
 
+Limited to results from IACat and RyeCat. so says siri
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
@@ -26,13 +27,28 @@ data("county.fips")
 data("uscountygeojson")
 data("usgeojson")
 
+
 #the COUNTYFP column is a character column, so we don't want to convert it to numeric
 # df <- fread("../output/output_county_count.csv_combined.csv", colClasses = c("COUNTYFP" = "character"))
-df <- fread("../output/output_state_count.csv_combined.csv", colClasses = c("COUNTYFP" = "character"))
-test=df[which(df$STATE_NAME=="Wisconsin"),]
-# order the data frame by the counts column
-test= test[order(-test$counts),]
+df <-
+  fread(
+    "../output/output_state_count.csv_combined.csv",
+    colClasses = c("COUNTYFP" = "character")
+  )
+# create a vector of the names that need to be mapped
+namesToMap <- c("Rye8", "RyePhone", "Rye13")
+# replace the names in the Name column with "RyeCat"
+df$Name[df$Name %in% namesToMap] <- "RyeCat"
+# get the names that start with sofia or that contain Papa or that start with tonga
+tongaNames <- df$Name[grepl("^tonga", df$Name, ignore.case = TRUE)]
+papaNames <- df$Name[grepl("papa", df$Name, ignore.case = TRUE)]
+sofiaNames <- df$Name[grepl("^sofia", df$Name, ignore.case = TRUE)]
+IACatNames <- c(tongaNames, papaNames, sofiaNames, "iha")
+# map the IACatNames to IACat
+df$Name[df$Name %in% IACatNames] <- "IACat"
 
+# subset the data frame to only include the rows where the Name column is equal to "RyeCat" or "IACat"
+df <- df[Name %in% c("RyeCat", "IACat"), ]
 ```
 
 Column {data-width=650}
@@ -76,9 +92,47 @@ highchart() %>%
 
 ```
 
+### cat counts per state
+
+```{r}
+# sum the counts column by the Name and STATE_NAME columns
+sumByCatState <-
+  sum_by_column(in_df = df, column_names = c("Name", "STATE_NAME"))
+
+sumByCatState <- sumByCatState[,.SD[which.max(counts)], by = STATE_NAME]
+
+
+sumByCatState$counts <- log10(sumByCatState$counts)
+sumByCatState$color <- sumByCatState$Name
+# create a color palette that maps RyeCat to bl
+colorPalette <- c("#0000FF","#FF0000")
+# create a named vector of colors
+colorVector <- setNames(colorPalette, unique(sumByCatState$Name))
+# replace the color column with the color vector
+sumByCatState$color <- colorVector[sumByCatState$color]
+# log10 transform the counts column
+#create a chlorealpleth map of the US
+highchart() %>%
+  hc_add_series_map(
+    usgeojson,
+    sumByCatState,
+    value = "counts",
+    joinBy = c("name", "STATE_NAME"),
+    name = "Count",
+    dataLabels = list(enabled = TRUE, format = '{point.name}')
+  ) %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_colorAxis(stops = color_stops()) %>%
+  hc_title(text = "Which Cat Wins Which State") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_tooltip(pointFormat = "{point.name} is won by {point.Name}: {point.value}")
+
+
+```
+
 ### Count of Tracks by County
 
-polygons may not capture water like wisconsin apostle islands
 
 
 ```{r}
@@ -105,89 +159,3 @@ highchart() %>%
 #   hc_tooltip(pointFormat = "{point.name}: {point.value}")
 
 ```
-
-### cat counts
-
-```{r}
-# map the Names "Rye8" "RyePhone" and "Rye13" to "RyeCat"
-# create a vector of the names that need to be mapped
-namesToMap <- c("Rye8", "RyePhone", "Rye13")
-# replace the names in the Name column with "RyeCat"
-# table(namesToMap %in% df$Name)
-df$Name[df$Name %in% namesToMap] <- "RyeCat"
-
-# get the names that start with sofia or that contain Papa or that start with tonga
-tongaNames <- df$Name[grepl("^tonga", df$Name, ignore.case = TRUE)]
-papaNames <- df$Name[grepl("papa", df$Name, ignore.case = TRUE)]
-sofiaNames <- df$Name[grepl("^sofia", df$Name, ignore.case = TRUE)]
-iacatNames <- c(tongaNames, papaNames, sofiaNames,"iha")
-# map the iacatNames to iacat
-df$Name[df$Name %in% iacatNames] <- "iacat"
-
-# print the unique cat names that are not RyeCat or iacat
-# unique(df$Name[!(df$Name %in% c("RyeCat", "iacat"))])
-
-# subset the data frame to only include the rows where the Name column is equal to "RyeCat" or "iacat"
-df <- df[Name %in% c("RyeCat", "iacat"), ]
- 
-# count wich cat wins which state
-# the column Name contains the name of the cat
-# the column counts contains the number of tracks
-# create a color for the Name column with the most counts in each state
-dfOriginal <- df
-# get the max count for each state
-maxByState <- df[, .(counts = max(counts)), by = c("STATE_NAME")]
-# merge the max count back to the original data frame
-df <- merge(df, maxByState, by = c("STATE_NAME"))
-# filter the data frame to only include the rows where the counts column is equal to the max count
-df <- df[counts.x == counts.y, ]
-# create a color column that is equal to the name column
-df$color <- df$Name
-# create a color palette that maps RyeCat to bl
-colorPalette <- c("#0000FF","#FF0000")
-# create a named vector of colors
-colorVector <- setNames(colorPalette, unique(df$Name))
-# replace the color column with the color vector
-df$color <- colorVector[df$color]
-# log10 transform the counts column
-df$counts <- log10(df$counts.x)
-#create a chlorealpleth map of the US
-highchart() %>%
-  hc_add_series_map(
-    usgeojson,
-    df,
-    value = "counts",
-    joinBy = c("name", "STATE_NAME"),
-    name = "Count",
-    dataLabels = list(enabled = TRUE, format = '{point.name}')
-  ) %>%
-  hc_mapNavigation(enabled = TRUE) %>%
-  hc_colorAxis(stops = color_stops()) %>%
-  hc_title(text = "Which Cat Wins Which State") %>%
-  hc_add_theme(hc_theme_smpl()) %>%
-  hc_legend(enabled = FALSE) %>%
-  hc_tooltip(pointFormat = "{point.name} is won by {point.Name}: {point.value}")
-
-```
-
-### cat counts
-
-```{r}
-# bar chart of number of states won by each cat
-# count the number of states won by each cat
-countByCat <- df[, .(counts = .N), by = c("Name")]
-# create a bar chart of the number of states won by each cat
-highchart() %>%
-  hc_add_series(
-    countByCat,
-    type = "bar",
-    hcaes(x = Name, y = counts),
-    name = "Count"
-  ) %>%
-  hc_title(text = "Number of States Won by Each Cat") %>%
-  hc_add_theme(hc_theme_smpl()) %>%
-  hc_legend(enabled = FALSE) %>%
-  hc_tooltip(pointFormat = "{point.Name} won {point.counts} states")
-
-
-  

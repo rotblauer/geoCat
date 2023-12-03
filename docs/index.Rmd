@@ -99,5 +99,64 @@ highchart() %>%
 ### which cat wins which state
 
 ```{r}
-# TODO count most tracks per state and color by cat
+# map the Names "Rye8" "RyePhone" and "Rye13" to "RyeCat"
+# create a vector of the names that need to be mapped
+namesToMap <- c("Rye8", "RyePhone", "Rye13")
+# replace the names in the Name column with "RyeCat"
+# table(namesToMap %in% df$Name)
+df$Name[df$Name %in% namesToMap] <- "RyeCat"
+
+# get the names that start with sofia or that contain Papa or that start with tonga
+tongaNames <- df$Name[grepl("^tonga", df$Name, ignore.case = TRUE)]
+papaNames <- df$Name[grepl("papa", df$Name, ignore.case = TRUE)]
+sofiaNames <- df$Name[grepl("^sofia", df$Name, ignore.case = TRUE)]
+iacatNames <- c(tongaNames, papaNames, sofiaNames,"iha")
+# map the iacatNames to iacat
+df$Name[df$Name %in% iacatNames] <- "iacat"
+
+# print the unique cat names that are not RyeCat or iacat
+# unique(df$Name[!(df$Name %in% c("RyeCat", "iacat"))])
+
+# subset the data frame to only include the rows where the Name column is equal to "RyeCat" or "iacat"
+df <- df[Name %in% c("RyeCat", "iacat"), ]
+ 
+# count wich cat wins which state
+# the column Name contains the name of the cat
+# the column counts contains the number of tracks
+# create a color for the Name column with the most counts in each state
+
+# get the max count for each state
+maxByState <- df[, .(counts = max(counts)), by = c("STATE_NAME")]
+# merge the max count back to the original data frame
+df <- merge(df, maxByState, by = c("STATE_NAME"))
+# filter the data frame to only include the rows where the counts column is equal to the max count
+df <- df[counts.x == counts.y, ]
+# create a color column that is equal to the name column
+df$color <- df$Name
+# create a color palette that maps RyeCat to bl
+colorPalette <- c("#FF0000", "#0000FF")
+# create a named vector of colors
+colorVector <- setNames(colorPalette, unique(df$Name))
+# replace the color column with the color vector
+df$color <- colorVector[df$color]
+# log10 transform the counts column
+df$counts <- log10(df$counts.x)
+#create a chlorealpleth map of the US
+highchart() %>%
+  hc_add_series_map(
+    usgeojson,
+    df,
+    value = "counts",
+    joinBy = c("name", "STATE_NAME"),
+    name = "Count",
+    dataLabels = list(enabled = TRUE, format = '{point.name}')
+  ) %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_colorAxis(stops = color_stops()) %>%
+  hc_title(text = "Which Cat Wins Which State") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_tooltip(pointFormat = "{point.name} is won by {point.Name}: {point.value}")
+
+
   

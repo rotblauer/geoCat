@@ -8,6 +8,11 @@ output:
     source_code: embed
 ---
 
+# accuracy not vetted
+
+Use these results without warranty or express or implied fitness for any purpose.  The results are not vetted for accuracy.  The results are not vetted for completeness.  The results are not vetted for usability. So says siri
+
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 

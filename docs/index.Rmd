@@ -19,6 +19,7 @@ knitr::opts_chunk$set(echo = FALSE)
 
 
 library(data.table)
+library(tidyverse)
 library(highcharter)
 library(dplyr)
 library(knitr)
@@ -34,7 +35,7 @@ theme_set(theme_minimal())
 df <-
   fread(
     "../output/output_state_count.csv_combined.csv",
-    colClasses = c("COUNTYFP" = "character")
+    colClasses = c("COUNTYFP" = "character", "STATEFP" = "character")
   )
 # create a vector of the names that need to be mapped
 namesToMap <- c("Rye8", "RyePhone", "Rye13")
@@ -112,8 +113,22 @@ highchart() %>%
 
 
 ```{r}
-# TODO where is California counties
 df$COUNTY_FIP=paste0(df$STATEFP,df$COUNTYFP)
+# 
+# stop()
+# Shannon County, SD (FIPS code = 46113) was renamed Oglala Lakota County and assigned anew FIPS code (46102) effective in 2014.
+
+# 
+df$COUNTY_FIP[df$COUNTY_FIP == "46102"] <- "46113"
+# ctyfips <- unlist(lapply(uscountygeojson$features, function (x) {
+#   if (is.null(x$id))
+#     NA
+#   else
+#     str_to_lower(x$properties$fips)
+# }))
+# df[which(!df$COUNTY_FIP %in% ctyfips),]
+# 
+# # 
 sumByCounty <-
   sum_by_column(in_df = df, column_names = c("COUNTY_FIP"))
 # log10 transform the counts column

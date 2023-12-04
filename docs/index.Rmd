@@ -2,13 +2,13 @@
 title: "geoCat"
 output: 
   flexdashboard::flex_dashboard:
-    orientation: rows
     vertical_layout: scroll
+    orientation: rows
     social: menu
     source_code: embed
 ---
 
-# accuracy not vetted
+# Cat US
 
 Use these results without warranty or express or implied fitness for any purpose.  The results are not vetted for accuracy.  The results are not vetted for completeness.  The results are not vetted for usability
 
@@ -23,11 +23,12 @@ library(highcharter)
 library(dplyr)
 library(knitr)
 library(maps)
+library(plotly)
 data("county.fips")
 data("uscountygeojson")
 data("usgeojson")
 
-
+theme_set(theme_minimal())
 #the COUNTYFP column is a character column, so we don't want to convert it to numeric
 # df <- fread("../output/output_county_count.csv_combined.csv", colClasses = c("COUNTYFP" = "character"))
 df <-
@@ -78,10 +79,7 @@ sum_by_column <- function(in_df, column_names) {
 
 ```
 
-Row 
--------------------------------------
-    
-
+## State counts
    
 ### Total Cats per State
 ```{r}
@@ -107,73 +105,6 @@ highchart() %>%
   hc_tooltip(pointFormat = "{point.name}: {point.value}")
 
 ```
-
-### cat counts per state
-
-```{r}
-# sum the counts column by the Name and STATE_NAME columns
-sumByCatState <-
-  sum_by_column(in_df = df, column_names = c("Name", "STATE_NAME"))
-
-sumByCatState <- sumByCatState[,.SD[which.max(counts)], by = STATE_NAME]
-
-# create a color palette that maps RyeCat to bl
-colorPalette <- c("#0000FF","#FF0000")
-# create a named vector of colors
-colorVector <- setNames(colorPalette, unique(sumByCatState$Name))
-# replace the color column with the color vector
-sumByCatState$color <- colorVector[sumByCatState$Name]
-# log10 transform the counts column
-#create a chlorealpleth map of the US
-highchart() %>%
-  hc_add_series_map(
-    usgeojson,
-    sumByCatState,
-    value = "counts",
-    joinBy = c("name", "STATE_NAME"),
-    name = "Cat Winner",
-    dataLabels = list(enabled = TRUE, format = '{point.name}'),color =colorVector
-  ) %>%
-  hc_mapNavigation(enabled = TRUE) %>%
-  hc_title(text = "Which Cat Wins Which State") %>%
-  hc_add_theme(hc_theme_smpl()) %>%
-  hc_legend(enabled = FALSE) %>%
-  hc_tooltip(pointFormat = "{point.name} is won by {point.Name}: {point.value} total tracks")
-
-
-```
-
-
-### States Won per Cat
-
-Includes DC
-
-```{r}
-
-
-# count the number of states that each cat won
-total = sumByCatState[, .N, by = Name]
-# create a bar chart of the number of states that each cat won
-# label by the cat name
-highchart() %>%
-  hc_add_series(
-    total,
-    type = "bar",
-    hcaes(x = Name, y = N),
-    name = "States Won",
-    dataLabels = list(enabled = TRUE, format = '{point.Name}')
-  ) %>%
-  hc_title(text = "States Won per Cat") %>%
-  hc_add_theme(hc_theme_smpl()) %>%
-  hc_legend(enabled = FALSE) %>%
-  hc_tooltip(pointFormat = "{point.Name} won {point.N} states")
-
-
-
-```
-
-Row {.tabset .tabset-fade}
--------------------------------------
 
 
 ### Count of Tracks by County
@@ -204,6 +135,126 @@ highchart() %>%
 #   hc_tooltip(pointFormat = "{point.name}: {point.value}")
 
 ```
+
+
+
+## Cat wins
+
+### cat counts per state
+
+```{r}
+# sum the counts column by the Name and STATE_NAME columns
+sumByCatStateFull <-
+  sum_by_column(in_df = df, column_names = c("Name", "STATE_NAME"))
+
+sumByCatStateWin <-
+  sumByCatStateFull[, .SD[which.max(counts)], by = STATE_NAME]
+
+# create a color palette that maps RyeCat to bl
+colorPalette <- c("#0000FF","#FF0000")
+# create a named vector of colors
+colorVector <- setNames(colorPalette, unique(sumByCatStateWin$Name))
+# replace the color column with the color vector
+sumByCatStateWin$color <- colorVector[sumByCatStateWin$Name]
+# log10 transform the counts column
+#create a chlorealpleth map of the US
+highchart() %>%
+  hc_add_series_map(
+    usgeojson,
+    sumByCatStateWin,
+    value = "counts",
+    joinBy = c("name", "STATE_NAME"),
+    name = "Cat Winner",
+    dataLabels = list(enabled = TRUE, format = '{point.name}'),color =colorVector
+  ) %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_title(text = "Which Cat Wins Which State (+DC") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_tooltip(pointFormat = "{point.name} is won by {point.Name}: {point.value} total tracks")
+
+
+```
+
+### States Won per Cat {data-width=250}
+
+
+
+```{r}
+
+
+# count the number of states that each cat won
+total = sumByCatStateWin[, .N, by = Name]
+#create a ggplot bar chart of the number of states that each cat won
+# label by the cat name
+# color by the colorPalette
+# order by the number of states won
+g = ggplot(total, aes(x = Name, y = N, fill = Name)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Name), vjust = -0.5, size = 3) +
+  scale_fill_manual(values = colorVector) +
+  labs(x = "Cat", y = "Number of States(+DC) Won") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplotly(g)
+
+
+```
+
+
+### cat counts per county
+
+```{r}
+# sum the counts column by the Name and STATE_NAME columns
+sumByCatCountyFull <-
+  sum_by_column(in_df = df,
+                column_names = c("Name", "COUNTY_FIP"))
+sumByCatCountyWin <-
+  sumByCatCountyFull[, .SD[which.max(counts)], by = COUNTY_FIP]
+sumByCatCountyWin$color <- colorVector[sumByCatCountyWin$Name]
+
+#create a chlorealpleth map of the US
+highchart() %>%
+  hc_add_series_map(
+    uscountygeojson,
+    sumByCatCountyWin,
+    value = "counts",
+    joinBy = c("fips", "COUNTY_FIP"),
+    name = "Cat Winner",
+    color = colorVector
+  ) %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_title(text = "Which Cat Wins Which County") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_tooltip(pointFormat = "{point.name} is won by {point.Name}: {point.value} total tracks")
+
+```
+
+### Counties Won per Cat {data-width=250}
+
+```{r}
+# count the number of states that each cat won
+total = sumByCatCountyWin[, .N, by = Name]
+#create a ggplot bar chart of the number of states that each cat won
+# label by the cat name
+# color by the colorPalette
+# order by the number of states won
+g=ggplot(total, aes(x = Name, y = N, fill = Name)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Name), vjust = -0.5, size = 3) +
+  scale_fill_manual(values = colorVector) +
+  labs(x = "Cat", y = "Number of Counties Won") +
+  theme_minimal() +
+  theme(legend.position = "none")
+ggplotly(g)
+
+
+```
+
+Row {.tabset .tabset-fade}
+-------------------------------------
 
 
 ### cats represented in the analysis

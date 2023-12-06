@@ -117,18 +117,8 @@ df$COUNTY_FIP=paste0(df$STATEFP,df$COUNTYFP)
 # 
 # stop()
 # Shannon County, SD (FIPS code = 46113) was renamed Oglala Lakota County and assigned anew FIPS code (46102) effective in 2014.
-
-# 
 df$COUNTY_FIP[df$COUNTY_FIP == "46102"] <- "46113"
-# ctyfips <- unlist(lapply(uscountygeojson$features, function (x) {
-#   if (is.null(x$id))
-#     NA
-#   else
-#     str_to_lower(x$properties$fips)
-# }))
-# df[which(!df$COUNTY_FIP %in% ctyfips),]
-# 
-# # 
+
 sumByCounty <-
   sum_by_column(in_df = df, column_names = c("COUNTY_FIP"))
 # log10 transform the counts column
@@ -191,6 +181,7 @@ highchart() %>%
 
 ```
 
+
 ### States Won per Cat {data-width=250}
 
 
@@ -247,6 +238,7 @@ highchart() %>%
 
 ```
 
+
 ### Counties Won per Cat {data-width=250}
 
 ```{r}
@@ -267,6 +259,73 @@ ggplotly(g)
 
 
 ```
+
+
+## Tracks per Cat per state
+
+
+
+### States Won per Cat {data-width=250}
+
+```{r}
+
+# get the second highest count for each state
+
+secondHighest <-
+  sumByCatStateFull[, .SD[order(-counts)[2]], by = STATE_NAME]
+# merge the sumByCatStateWin and secondHighest data frames by the STATE_NAME column
+diffByCatState <-
+  merge(sumByCatStateWin,
+        secondHighest,
+        by = "STATE_NAME",
+        all = TRUE)
+# calculate the difference between the counts columns
+diffByCatState$diff <-
+  diffByCatState$counts.x - diffByCatState$counts.y
+#log10 transform the diff column
+# if the difference is NA, set it to counts.x
+diffByCatState$diff[is.na(diffByCatState$diff)] <-
+  diffByCatState$counts.x[is.na(diffByCatState$diff)]
+
+diffByCatState$log10diff <- log10(diffByCatState$diff)
+
+diffByCatState$log10diff[diffByCatState$Name.x == "IACat"] <-
+  -diffByCatState$log10diff[diffByCatState$Name.x == "IACat"]
+
+p0 <- ggplot(data = diffByCatState,
+             mapping = aes(
+               x = log10diff,
+               y = reorder(STATE_NAME, log10diff),
+               color = Name.x
+             )) + scale_color_manual(values = colorVector) + geom_vline(xintercept = 0,
+                                                                         color = "black",
+                                                                         linetype = "dashed") + geom_point()
+# remove the legend
+p0 <- p0 + theme(legend.position = "none")
+
+ggplotly(p0)
+
+
+# stop()
+```
+
+
+
+### Tracks per Cat per state {data-width=250}
+
+```{r}
+# # https://rpubs.com/Wyclife/mapping_3D
+# # https://www.r-graph-gallery.com/327-chloropleth-map-from-geojson-with-ggplot2.html
+# 
+# library(sf)
+# shapeFile="../data/census/cb_2020_us_county_500k.zip"
+# shape=read_sf(shapeFile)
+# 
+# 
+# ggplot() + geom_sf(data = usgeojson)
+# 
+```
+
 
 Row {.tabset .tabset-fade}
 -------------------------------------

@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"compress/gzip"
 	"flag"
 	"fmt"
 	"io"
@@ -11,14 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/paulmach/orb/geojson"
 	"github.com/sams96/rgeo"
-	"github.com/shirou/gopsutil/v3/mem"
 )
 
 // city,user,count,latest_date
@@ -33,10 +29,34 @@ func init() {
 	rg, _ = rgeo.New(rgeo.Cities10, rgeo.Provinces10, rgeo.Countries10)
 }
 
-const posBatch = 500000
-
-var flagTargetFilepath = flag.String("target", filepath.Join(os.Getenv("HOME"), "tdata", "master.json.gz"), "Target filepath")
+// var flagTargetFilepath = flag.String("target", filepath.Join(os.Getenv("HOME"), "tdata", "master.json.gz"), "Target filepath")
 var flagOutputRootFilepath = flag.String("output-root", filepath.Join(".", "go-output"), "Output root dir")
+var flagBatchSize = flag.Int64("batch-size", 500_000, "Batch size")
+
+func getActivityOutputFilepath(batchSize, batchNumber int64) string {
+	return filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_activity_count.csv", batchNumber, batchSize))
+}
+
+func getStateOutputFilepath(batchSize, batchNumber int64) string {
+	return filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_state_count.csv", batchNumber, batchSize))
+}
+
+func getCountryOutputFilepath(batchSize, batchNumber int64) string {
+	return filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_country_count.csv", batchNumber, batchSize))
+}
+
+func rootOutputComplete(batchSize, batchNumber int64) bool {
+	if _, err := os.Stat(getActivityOutputFilepath(batchSize, batchNumber)); err != nil {
+		return false
+	}
+	if _, err := os.Stat(getStateOutputFilepath(batchSize, batchNumber)); err != nil {
+		return false
+	}
+	if _, err := os.Stat(getCountryOutputFilepath(batchSize, batchNumber)); err != nil {
+		return false
+	}
+	return true
+}
 
 var aliases = map[*regexp.Regexp]string{
 	regexp.MustCompile(`(?i)(Big.*P.*|Isaac.*|.*moto.*|iha)`): "ia",
@@ -77,33 +97,62 @@ func tallyMapMap(m map[string]map[string]uint64, k1, k2 string, incr uint64) {
 	tallyMap(m[k1], k2, incr)
 }
 
-// GZLines iterates over lines of a file that's gzip-compressed.
-// Iterating lines of an io.Reader is one of those things that Go
-// makes needlessly complex.
-// https://gist.github.com/lovasoa/38a207ecdefa1d60225403a644800818
-func GZLines(rawf io.Reader) (chan []byte, chan error, error) {
-	// rawContents, err := gzip.NewReader(rawf)
-	// if err != nil {
-	// 	return nil, nil, err
-	// }
+// // GZLines iterates over lines of a file that's gzip-compressed.
+// // Iterating lines of an io.Reader is one of those things that Go
+// // makes needlessly complex.
+// // https://gist.github.com/lovasoa/38a207ecdefa1d60225403a644800818
+// func GZLines(rawf io.Reader) (chan []byte, chan error, error) {
+// 	// rawContents, err := gzip.NewReader(rawf)
+// 	// if err != nil {
+// 	// 	return nil, nil, err
+// 	// }
+//
+// 	pr, pw := io.Pipe()
+// 	gzR, _ := gzip.NewReader(pr)
+//
+// 	// bufferedContents := bufio.NewReaderSize(rawContents, 1024*1024*8) // default 4096
+//
+// 	// pr, pw := io.Pipe()
+// 	// rawPiped, _ := gzip.NewReader(pr)
+//
+// 	ch := make(chan []byte, 2)
+// 	errs := make(chan error)
+//
+// 	go func(ch chan []byte, errs chan error, contents *bufio.Reader) {
+// 		defer func(ch chan []byte, errs chan error) {
+// 			close(ch)
+// 			close(errs)
+// 		}(ch, errs)
+//
+// 		for {
+// 			line, err := contents.ReadBytes('\n')
+// 			if err != nil {
+// 				errs <- err
+// 				if err != io.EOF {
+// 					return
+// 				}
+// 			} else {
+// 				ch <- line
+// 			}
+// 		}
+// 	}(ch, errs, bufferedContents)
+//
+// 	return ch, errs, nil
+// }
 
-	pr, pw := io.Pipe()
-	gzR, _ := gzip.NewReader(pr)
+func readLines(raw io.Reader, batchSize int64, workers int) (chan [][]byte, chan error, error) {
+	bufferedContents := bufio.NewReaderSize(raw, 4096) // default 4096
 
-	// bufferedContents := bufio.NewReaderSize(rawContents, 1024*1024*8) // default 4096
-
-	// pr, pw := io.Pipe()
-	// rawPiped, _ := gzip.NewReader(pr)
-
-	ch := make(chan []byte, 2)
+	ch := make(chan [][]byte, workers)
 	errs := make(chan error)
 
-	go func(ch chan []byte, errs chan error, contents *bufio.Reader) {
-		defer func(ch chan []byte, errs chan error) {
+	go func(ch chan [][]byte, errs chan error, contents *bufio.Reader) {
+		defer func(ch chan [][]byte, errs chan error) {
 			close(ch)
 			close(errs)
 		}(ch, errs)
 
+		lines := [][]byte{}
 		for {
 			line, err := contents.ReadBytes('\n')
 			if err != nil {
@@ -112,8 +161,15 @@ func GZLines(rawf io.Reader) (chan []byte, chan error, error) {
 					return
 				}
 			} else {
-				ch <- line
+				lines = append(lines, line)
+				if int64(len(lines)) == batchSize {
+					ch <- lines
+					lines = [][]byte{}
+				}
 			}
+		}
+		if len(lines) > 0 {
+			ch <- lines
 		}
 	}(ch, errs, bufferedContents)
 
@@ -297,11 +353,8 @@ func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 // It short-circuits before unmarshalling the json if the ACTIVITY file exists.
 // I think the json ummarshalling is the bottleneck.
 func tallyBatch(batchN int64, readLines [][]byte) error {
-	activityOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_activity_count.csv", batchN, len(readLines)))
-
-	// short circuit if file exists
-	if _, err := os.Stat(activityOutputFile); err == nil {
-		log.Println("File exists, skipping:", activityOutputFile)
+	if rootOutputComplete(*flagBatchSize, batchN) {
+		log.Printf("Skipping batch %d, output already exists\n", batchN)
 		return nil
 	}
 
@@ -324,53 +377,56 @@ func main() {
 
 	_ = os.MkdirAll(*flagOutputRootFilepath, 0755)
 
-	// Read all the file into memory.
-	readStart := time.Now()
-	bs, err := os.ReadFile(*flagTargetFilepath)
+	// // Read all the file into memory.
+	// readStart := time.Now()
+	// bs, err := os.ReadFile(*flagTargetFilepath)
+	// if err != nil {
+	// 	log.Fatalln(err)
+	// }
+	// log.Printf("Read %d bytes in %s\batchCount", len(bs), time.Since(readStart))
+	//
+	// buf := bytes.NewBuffer(bs)
+	// lineCh, errCh, err := GZLines(buf)
+	// if err != nil {
+	// 	log.Fatalln(err)
+	// }
+
+	linesCh, errCh, err := readLines(os.Stdin, *flagBatchSize, 4)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	log.Printf("Read %d bytes in %s\n", len(bs), time.Since(readStart))
 
-	buf := bytes.NewBuffer(bs)
-	lineCh, errCh, err := GZLines(buf)
-	if err != nil {
-		log.Fatalln(err)
-	}
+	batchCount := int64(0)
 
-	readLines := make([][]byte, 0)
-	n := int64(0)
 readLoop:
 	for {
 		select {
 
-		case line := <-lineCh:
-			if n == 0 {
-				fmt.Println("First line:", string(line))
-				// {"type":"Feature","id":1,"geometry":{"type":"Point","coordinates":[-122.392033,37.789189]},"properties":{"Accur
-				// acy":0,"Elevation":0,"Heading":0,"Name":"jl","Speed":0,"Time":"2010-05-04T09:15:12Z","UUID":"","UnixTime":1272964512,"Versi
-				// on":""}}
+		case lines := <-linesCh:
+			if batchCount == 0 {
+				log.Println("First line:", string(lines[0]))
+				// => {"type":"Feature","id":1,"geometry":{"type":"Point","coordinates":[-122.392033,37.789189]},"properties":{"Accuracy":0,"Elevation":0,"Heading":0,"Name":"jl","Speed":0,"Time":"2010-05-04T09:15:12Z","UUID":"","UnixTime":1272964512,"Version":""}}
 			}
-			n++
-			readLines = append(readLines, line)
-			if n%posBatch == 0 {
-				// Poor man's throttle.
-				once := sync.Once{}
-				nRoutines := runtime.NumGoroutine()
-				vmStat, _ := mem.VirtualMemory()
-				freeMB := vmStat.Free / (1024 * 1024)
-				for nRoutines > runtime.GOMAXPROCS(0) || freeMB < 4096 {
-					once.Do(func() {
-						log.Println("Throttling...")
-					})
-					time.Sleep(500 * time.Millisecond)
-					nRoutines = runtime.NumGoroutine()
-					freeMB = vmStat.Free / (1024 * 1024)
-				}
-				fmt.Printf("Read %d lines. GOROUTINES=%d Free memory=%s\n", n, nRoutines, strconv.FormatUint(freeMB, 10)+" MB")
-				go tallyBatch(n/posBatch, readLines)
-				readLines = make([][]byte, 0)
-			}
+			batchCount++
+			log.Println("Batch", batchCount)
+			tallyBatch(batchCount, lines)
+			// if batchCount%posBatch == 0 {
+			// 	// // Poor man's throttle.
+			// 	// once := sync.Once{}
+			// 	// nRoutines := runtime.NumGoroutine()
+			// 	// vmStat, _ := mem.VirtualMemory()
+			// 	// freeMB := vmStat.Free / (1024 * 1024)
+			// 	// for nRoutines > runtime.GOMAXPROCS(0) || freeMB < 4096 {
+			// 	// 	once.Do(func() {
+			// 	// 		log.Println("Throttling...")
+			// 	// 	})
+			// 	// 	time.Sleep(500 * time.Millisecond)
+			// 	// 	nRoutines = runtime.NumGoroutine()
+			// 	// 	freeMB = vmStat.Free / (1024 * 1024)
+			// 	// }
+			// 	// fmt.Printf("Read %d lines. GOROUTINES=%d Free memory=%s\n", batchCount, nRoutines, strconv.FormatUint(freeMB, 10)+" MB")
+			//
+			// }
 
 		case err := <-errCh:
 			if err == io.EOF {
@@ -379,10 +435,10 @@ readLoop:
 			log.Fatal(err)
 		}
 	}
-	if len(readLines) > 0 {
-		fmt.Printf("Read %d lines. GOROUTINES=%d\n", n, runtime.NumGoroutine())
-		tallyBatch(n/posBatch, readLines)
-	}
+	// if len(didReadLines) > 0 {
+	// 	fmt.Printf("Read %d lines. GOROUTINES=%d\n", batchCount, runtime.NumGoroutine())
+	// 	tallyBatch(batchCount/posBatch, didReadLines)
+	// }
 
 	fmt.Println("Global")
 	for k, v := range activityGlobal {

@@ -183,3 +183,5 @@ po/*~
 rsconnect/
 
 *.Rproj
+
+gocat

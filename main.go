@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/paulmach/orb/geojson"
@@ -32,8 +31,9 @@ func init() {
 }
 
 // var flagTargetFilepath = flag.String("target", filepath.Join(os.Getenv("HOME"), "tdata", "master.json.gz"), "Target filepath")
-var flagOutputRootFilepath = flag.String("output-root", filepath.Join(".", "go-output"), "Output root dir")
+var flagOutputRootFilepath = flag.String("output", filepath.Join(".", "go-output"), "Output root dir")
 var flagBatchSize = flag.Int64("batch-size", 500_000, "Batch size")
+var flagWorkers = flag.Int("workers", 4, "Number of workers")
 
 func getActivityOutputFilepath(batchSize, batchNumber int64) string {
 	return filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_activity_count.csv", batchNumber, batchSize))
@@ -81,10 +81,6 @@ func aliasOrName(name string) string {
 	return name
 }
 
-var mapRWLock = sync.RWMutex{}
-var activityGlobal = make(map[string]uint64)
-var activityCat = make(map[string]map[string]uint64)
-
 func tallyMap(m map[string]uint64, k string, incr uint64) {
 	if _, ok := m[k]; !ok {
 		m[k] = 0
@@ -99,50 +95,7 @@ func tallyMapMap(m map[string]map[string]uint64, k1, k2 string, incr uint64) {
 	tallyMap(m[k1], k2, incr)
 }
 
-// // GZLines iterates over lines of a file that's gzip-compressed.
-// // Iterating lines of an io.Reader is one of those things that Go
-// // makes needlessly complex.
-// // https://gist.github.com/lovasoa/38a207ecdefa1d60225403a644800818
-// func GZLines(rawf io.Reader) (chan []byte, chan error, error) {
-// 	// rawContents, err := gzip.NewReader(rawf)
-// 	// if err != nil {
-// 	// 	return nil, nil, err
-// 	// }
-//
-// 	pr, pw := io.Pipe()
-// 	gzR, _ := gzip.NewReader(pr)
-//
-// 	// bufferedContents := bufio.NewReaderSize(rawContents, 1024*1024*8) // default 4096
-//
-// 	// pr, pw := io.Pipe()
-// 	// rawPiped, _ := gzip.NewReader(pr)
-//
-// 	ch := make(chan []byte, 2)
-// 	errs := make(chan error)
-//
-// 	go func(ch chan []byte, errs chan error, contents *bufio.Reader) {
-// 		defer func(ch chan []byte, errs chan error) {
-// 			close(ch)
-// 			close(errs)
-// 		}(ch, errs)
-//
-// 		for {
-// 			line, err := contents.ReadBytes('\n')
-// 			if err != nil {
-// 				errs <- err
-// 				if err != io.EOF {
-// 					return
-// 				}
-// 			} else {
-// 				ch <- line
-// 			}
-// 		}
-// 	}(ch, errs, bufferedContents)
-//
-// 	return ch, errs, nil
-// }
-
-func readLines(raw io.Reader, batchSize int64, workers int) (chan [][]byte, chan error, error) {
+func readLinesBatching(raw io.Reader, batchSize int64, workers int) (chan [][]byte, chan error, error) {
 	bufferedContents := bufio.NewReaderSize(raw, 4096) // default 4096
 
 	ch := make(chan [][]byte, workers)
@@ -158,6 +111,11 @@ func readLines(raw io.Reader, batchSize int64, workers int) (chan [][]byte, chan
 		for {
 			line, err := contents.ReadBytes('\n')
 			if err != nil {
+				// Send remaining lines, an error expected when EOF.
+				if len(lines) > 0 {
+					ch <- lines
+					lines = [][]byte{}
+				}
 				errs <- err
 				if err != io.EOF {
 					return
@@ -169,9 +127,6 @@ func readLines(raw io.Reader, batchSize int64, workers int) (chan [][]byte, chan
 					lines = [][]byte{}
 				}
 			}
-		}
-		if len(lines) > 0 {
-			ch <- lines
 		}
 	}(ch, errs, bufferedContents)
 
@@ -232,6 +187,11 @@ func tallyCatActivities(features []geojson.Feature) (counts map[string]map[strin
 }
 
 func tallyBatchActivity(batchN int64, features []geojson.Feature) error {
+	// start := time.Now()
+	// defer func() {
+	// 	log.Println("tallyBatchActivity", batchN, "elapsed", time.Since(start).Round(time.Second).String(), "lines", len(features))
+	// }()
+
 	activityOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_activity_count.csv", batchN, len(features)))
 
 	counts, times, err := tallyCatActivities(features)
@@ -311,6 +271,11 @@ func tallyCatLocs(features []geojson.Feature) (states map[string]map[string]uint
 }
 
 func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
+	// start := time.Now()
+	// defer func() {
+	// 	log.Println("tallyBatchLoc", batchN, "elapsed", time.Since(start).Round(time.Second).String(), "lines", len(features))
+	// }()
+
 	stateOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_state_count.csv", batchN, len(features)))
 	countryOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_country_count.csv", batchN, len(features)))
 
@@ -380,6 +345,12 @@ func tallyBatch(batchN int64, readLines [][]byte) error {
 		return nil
 	}
 
+	// start := time.Now()
+	// defer func() {
+	// 	log.Println("tallyBatch", batchN, "elapsed", time.Since(start).Round(time.Second).String(), "lines", len(readLines), "output", rootOutputComplete(*flagBatchSize, batchN))
+	// }()
+
+	// This is the slow part.
 	readFeatures := make([]geojson.Feature, 0)
 	for _, line := range readLines {
 		f := geojson.Feature{}
@@ -388,70 +359,54 @@ func tallyBatch(batchN int64, readLines [][]byte) error {
 		}
 		readFeatures = append(readFeatures, f)
 	}
+
 	go tallyBatchActivity(batchN, readFeatures)
 	go tallyBatchLoc(batchN, readFeatures)
+
 	return nil
 }
 
 func main() {
-
 	flag.Parse()
 
+	// ensure output dir exists
 	_ = os.MkdirAll(*flagOutputRootFilepath, 0755)
 
-	// // Read all the file into memory.
-	// readStart := time.Now()
-	// bs, err := os.ReadFile(*flagTargetFilepath)
-	// if err != nil {
-	// 	log.Fatalln(err)
-	// }
-	// log.Printf("Read %d bytes in %s\batchCount", len(bs), time.Since(readStart))
-	//
-	// buf := bytes.NewBuffer(bs)
-	// lineCh, errCh, err := GZLines(buf)
-	// if err != nil {
-	// 	log.Fatalln(err)
-	// }
-
-	linesCh, errCh, err := readLines(os.Stdin, *flagBatchSize, 4)
+	linesCh, errCh, err := readLinesBatching(os.Stdin, *flagBatchSize, *flagWorkers)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	batchCount := int64(0)
+	type work struct {
+		batchNumber int64
+		lines       [][]byte
+	}
+	workCh := make(chan work, *flagWorkers)
+	for i := 0; i < *flagWorkers; i++ {
+		go func() {
+			for w := range workCh {
+				tallyBatch(w.batchNumber, w.lines)
+			}
+		}()
+	}
 
+	batchCount := int64(0)
 readLoop:
 	for {
 		select {
-
 		case lines := <-linesCh:
-			if batchCount == 0 {
-				log.Println("First line:", string(lines[0]))
-				// => {"type":"Feature","id":1,"geometry":{"type":"Point","coordinates":[-122.392033,37.789189]},"properties":{"Accuracy":0,"Elevation":0,"Heading":0,"Name":"jl","Speed":0,"Time":"2010-05-04T09:15:12Z","UUID":"","UnixTime":1272964512,"Version":""}}
-			}
 			batchCount++
-
 			lastTrackTime := mustGetTrackTime(lines[len(lines)-1])
+			nRoutines := runtime.NumGoroutine()
+			log.Println("Batch", batchCount, "GOROUTINES", nRoutines, lastTrackTime.Format(time.RFC3339))
 
-			log.Println("Batch", batchCount, "GOROUTINES", runtime.NumGoroutine(), lastTrackTime.Format(time.RFC3339))
-			tallyBatch(batchCount, lines)
-			// if batchCount%posBatch == 0 {
-			// 	// // Poor man's throttle.
-			// 	// once := sync.Once{}
-			// 	// nRoutines := runtime.NumGoroutine()
-			// 	// vmStat, _ := mem.VirtualMemory()
-			// 	// freeMB := vmStat.Free / (1024 * 1024)
-			// 	// for nRoutines > runtime.GOMAXPROCS(0) || freeMB < 4096 {
-			// 	// 	once.Do(func() {
-			// 	// 		log.Println("Throttling...")
-			// 	// 	})
-			// 	// 	time.Sleep(500 * time.Millisecond)
-			// 	// 	nRoutines = runtime.NumGoroutine()
-			// 	// 	freeMB = vmStat.Free / (1024 * 1024)
-			// 	// }
-			// 	// fmt.Printf("Read %d lines. GOROUTINES=%d Free memory=%s\n", batchCount, nRoutines, strconv.FormatUint(freeMB, 10)+" MB")
-			//
-			// }
+			workCh <- work{
+				batchNumber: batchCount,
+				lines:       lines,
+			}
+
+			// See https://github.com/dc0d/workerpool for a dynamically expandable worker pool.
+			// Would be cool to target memory consumption, and then scale aiming for that.
 
 		case err := <-errCh:
 			if err == io.EOF {
@@ -460,21 +415,5 @@ readLoop:
 			log.Fatal(err)
 		}
 	}
-	// if len(didReadLines) > 0 {
-	// 	fmt.Printf("Read %d lines. GOROUTINES=%d\n", batchCount, runtime.NumGoroutine())
-	// 	tallyBatch(batchCount/posBatch, didReadLines)
-	// }
-
-	fmt.Println("Global")
-	for k, v := range activityGlobal {
-		fmt.Printf("%s,%d\n", k, v)
-	}
-
-	fmt.Println("Cat")
-	for k, v := range activityCat {
-		for kk, vv := range v {
-			fmt.Printf("%s,%s,%d\n", k, kk, vv)
-		}
-	}
-
+	close(workCh)
 }

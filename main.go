@@ -96,6 +96,20 @@ func tallyMapMap(m map[string]map[string]uint64, k1, k2 string, incr uint64) {
 	tallyMap(m[k1], k2, incr)
 }
 
+func writeFileCreating(filepath string, buf *bytes.Buffer) error {
+	f, err := os.Create(filepath)
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(buf.Bytes()); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func readLinesBatching(raw io.Reader, batchSize int64, workers int) (chan [][]byte, chan error, error) {
 	bufferedContents := bufio.NewReaderSize(raw, 4096) // default 4096
 
@@ -167,7 +181,7 @@ func tallyCatActivities(features []geojson.Feature) (counts map[string]map[strin
 	times = make(map[string]time.Time)
 	for _, f := range features {
 		if err := tallyCatActivity(counts, times, f); err != nil {
-			log.Fatalln(err)
+			return nil, nil, err
 		}
 	}
 	return counts, times, err
@@ -175,14 +189,10 @@ func tallyCatActivities(features []geojson.Feature) (counts map[string]map[strin
 
 // tallyBatchActivity garners activity data for a batch of tracks and writes it to the file.
 func tallyBatchActivity(batchN int64, features []geojson.Feature) error {
-	// start := time.Now()
-	// defer func() {
-	// 	log.Println("tallyBatchActivity", batchN, "elapsed", time.Since(start).Round(time.Second).String(), "lines", len(features))
-	// }()
-
-	activityOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_activity_count.csv", batchN, len(features)))
-
 	counts, times, err := tallyCatActivities(features)
+	if err != nil {
+		return err
+	}
 
 	writeBuf := bytes.NewBuffer([]byte{})
 	writeBuf.Write([]byte("Activity,Name,date,counts\n")) // header
@@ -193,18 +203,15 @@ func tallyBatchActivity(batchN int64, features []geojson.Feature) error {
 			// log.Println(p)
 			_, err := writeBuf.Write([]byte(p))
 			if err != nil {
-				log.Fatalln(err)
+				return err
 			}
 		}
 	}
 
-	// writeBuf to file
-	f, err := os.Create(activityOutputFile)
-	if err != nil {
-		log.Fatalln(err)
+	activityOutputFile := getActivityOutputFilepath(*flagBatchSize, batchN)
+	if err := writeFileCreating(activityOutputFile, writeBuf); err != nil {
+		return err
 	}
-	_, _ = f.Write(writeBuf.Bytes())
-	_ = f.Close()
 	log.Printf("Wrote %s\n", activityOutputFile)
 
 	return nil
@@ -213,8 +220,6 @@ func tallyBatchActivity(batchN int64, features []geojson.Feature) error {
 // tallyCatLoc tallies location (state, country) info for an individual track.
 // It uses a library with geo data built into the lib/binary to avoid dealing with shapefiles directly.
 func tallyCatLoc(catStates, catCountries map[string]map[string]uint64, catTimes map[string]time.Time, f geojson.Feature) error {
-	// fmt.Println(string(b))
-
 	name, nameOk := f.Properties["Name"]
 	if !nameOk {
 		return nil
@@ -235,7 +240,10 @@ func tallyCatLoc(catStates, catCountries map[string]map[string]uint64, catTimes 
 	// on":""}}
 	pt := f.Point()
 
-	loc, _ := rg.ReverseGeocode([]float64{pt.Lon(), pt.Lat()})
+	loc, err := rg.ReverseGeocode([]float64{pt.Lon(), pt.Lat()})
+	if err != nil {
+		return err
+	}
 	// => (rgeo.Location) <Location> San Francisco1, California, United States of America (USA), North America
 
 	state := loc.Province
@@ -244,7 +252,6 @@ func tallyCatLoc(catStates, catCountries map[string]map[string]uint64, catTimes 
 	tallyMapMap(catStates, catName, state, 1)
 	tallyMapMap(catCountries, catName, country, 1)
 
-	// shp.Open("data/naturalearthdata/ne_50m_admin_0_countries/ne_50m_admin_0_countries.shp")
 	return nil
 }
 
@@ -255,7 +262,7 @@ func tallyCatLocs(features []geojson.Feature) (states map[string]map[string]uint
 	times = make(map[string]time.Time)
 	for _, f := range features {
 		if err := tallyCatLoc(states, countries, times, f); err != nil {
-			log.Fatalln(err)
+			return nil, nil, nil, err
 		}
 	}
 	return states, countries, times, err
@@ -263,15 +270,10 @@ func tallyCatLocs(features []geojson.Feature) (states map[string]map[string]uint
 
 // tallyBatchLoc garners location (state, country) info for tracks and writes them to their respective files.
 func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
-	// start := time.Now()
-	// defer func() {
-	// 	log.Println("tallyBatchLoc", batchN, "elapsed", time.Since(start).Round(time.Second).String(), "lines", len(features))
-	// }()
-
-	stateOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_state_count.csv", batchN, len(features)))
-	countryOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_country_count.csv", batchN, len(features)))
-
 	states, countries, times, err := tallyCatLocs(features)
+	if err != nil {
+		return err
+	}
 
 	// States
 	writeBuf := bytes.NewBuffer([]byte{})
@@ -287,18 +289,16 @@ func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 			// log.Println(p)
 			_, err := writeBuf.Write([]byte(p))
 			if err != nil {
-				log.Fatalln(err)
+				return err
 			}
 		}
 	}
 
 	// writeBuf to file
-	f, err := os.Create(stateOutputFile)
-	if err != nil {
-		log.Fatalln(err)
+	stateOutputFile := getStateOutputFilepath(*flagBatchSize, batchN)
+	if err := writeFileCreating(stateOutputFile, writeBuf); err != nil {
+		return err
 	}
-	_, _ = f.Write(writeBuf.Bytes())
-	_ = f.Close()
 	log.Printf("Wrote %s\n", stateOutputFile)
 
 	// Countries
@@ -311,18 +311,16 @@ func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 			// log.Println(p)
 			_, err := writeBuf.Write([]byte(p))
 			if err != nil {
-				log.Fatalln(err)
+				return err
 			}
 		}
 	}
 
 	// writeBuf to file
-	f, err = os.Create(countryOutputFile)
-	if err != nil {
-		log.Fatalln(err)
+	countryOutputFile := getCountryOutputFilepath(*flagBatchSize, batchN)
+	if err := writeFileCreating(countryOutputFile, writeBuf); err != nil {
+		return err
 	}
-	_, _ = f.Write(writeBuf.Bytes())
-	_ = f.Close()
 	log.Printf("Wrote %s\n", countryOutputFile)
 
 	return nil
@@ -333,21 +331,16 @@ func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 // I think the JSON unmarshalling is the bottleneck.
 func tallyBatch(batchN int64, readLines [][]byte) error {
 	if rootOutputComplete(*flagBatchSize, batchN) {
-		log.Printf("Skipping batch %d, output already exists\n", batchN)
+		log.Printf("Skipping batch %d, all outputs already exists\n", batchN)
 		return nil
 	}
 
-	// start := time.Now()
-	// defer func() {
-	// 	log.Println("tallyBatch", batchN, "elapsed", time.Since(start).Round(time.Second).String(), "lines", len(readLines), "output", rootOutputComplete(*flagBatchSize, batchN))
-	// }()
-
-	// This is the slow part.
+	// This is the slowest part.
 	readFeatures := make([]geojson.Feature, 0)
 	for _, line := range readLines {
 		f := geojson.Feature{}
 		if err := f.UnmarshalJSON(line); err != nil {
-			log.Fatalln(err)
+			return err
 		}
 		readFeatures = append(readFeatures, f)
 	}

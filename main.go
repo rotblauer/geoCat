@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,13 +29,25 @@ var rg *rgeo.Rgeo
 
 func init() {
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
-	rg, _ = rgeo.New(rgeo.Cities10, rgeo.Provinces10, rgeo.Countries10)
+	rg, _ = rgeo.New(rgeo.Cities10, rgeo.Provinces10, rgeo.Countries10 /* rgeo.Countries110 does not fix rgeo country lookup erors */)
+}
+
+var ignoreReverseGeocodeErrors = []string{
+	"country not found",
+	// 140.74868774414062 41.79047775268555 => https://www.google.com/maps/place/41%C2%B047'25.4%22N+140%C2%B044'55.0%22E/@41.7816932,140.753944,13.79z/data=!4m4!3m3!8m2!3d41.7904!4d140.7486?entry=ttu
+	// -90.2296142578125 38.604461669921875 => https://www.google.com/maps/place/38%C2%B036'16.1%22N+90%C2%B013'46.6%22W/@38.5929618,-90.2187837,13.79z/data=!4m4!3m3!8m2!3d38.6044617!4d-90.2296143?entry=ttu
+	// https://github.com/sams96/rgeo#usage
 }
 
 // var flagTargetFilepath = flag.String("target", filepath.Join(os.Getenv("HOME"), "tdata", "master.json.gz"), "Target filepath")
 var flagOutputRootFilepath = flag.String("output", filepath.Join(".", "go-output"), "Output root dir")
 var flagBatchSize = flag.Int64("batch-size", 500_000, "Batch size")
 var flagWorkers = flag.Int("workers", 4, "Number of workers")
+
+func roundFloat(val float64, precision uint) float64 {
+	ratio := math.Pow(10, float64(precision))
+	return math.Round(val*ratio) / ratio
+}
 
 func getActivityOutputFilepath(batchSize, batchNumber int64) string {
 	return filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_activity_count.csv", batchNumber, batchSize))
@@ -226,13 +239,15 @@ func tallyCatLoc(catStates, catCountries map[string]map[string]uint64, catTimes 
 	}
 	catName := aliasOrName(name.(string))
 
+	var err error
+	var catTime time.Time
 	t, ok := f.Properties["Time"]
 	if ok {
-		t, err := time.Parse(time.RFC3339, t.(string))
+		catTime, err = time.Parse(time.RFC3339, t.(string))
 		if err != nil {
 			return err
 		}
-		catTimes[catName] = t // overwrite will yield latest for cat name
+		catTimes[catName] = catTime // overwrite will yield latest for cat name
 	}
 
 	// {"type":"Feature","id":1,"geometry":{"type":"Point","coordinates":[-122.392033,37.789189]},"properties":{"Accur
@@ -240,11 +255,27 @@ func tallyCatLoc(catStates, catCountries map[string]map[string]uint64, catTimes 
 	// on":""}}
 	pt := f.Point()
 
-	loc, err := rg.ReverseGeocode([]float64{pt.Lon(), pt.Lat()})
+	// try rounding to see if rgeo likes that better.
+	// nope.
+	lon := roundFloat(pt.Lon(), 6)
+	lat := roundFloat(pt.Lat(), 6)
+	var loc rgeo.Location
+	loc, err = rg.ReverseGeocode([]float64{lon, lat})
 	if err != nil {
-		return err
+		for _, ignore := range ignoreReverseGeocodeErrors {
+			if strings.Contains(err.Error(), ignore) {
+				// FIXME This happens a lot, weirdly. Check the ignored errors for commented context.
+				// log.Println("WARN: country not found", f.Properties["Name"], catTime.Format(time.RFC3339), lon, lat)
+				err = nil
+			}
+		}
+		if err != nil {
+			return err
+		}
 	}
+	// Ideally this returns:
 	// => (rgeo.Location) <Location> San Francisco1, California, United States of America (USA), North America
+	// But it can also return an error: country not found
 
 	state := loc.Province
 	country := loc.Country

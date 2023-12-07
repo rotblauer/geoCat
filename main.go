@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/paulmach/orb/geojson"
@@ -103,7 +104,7 @@ func readLinesBatching(raw io.Reader, batchSize int64, workers int) (chan [][]by
 
 	go func(ch chan [][]byte, errs chan error, contents *bufio.Reader) {
 		defer func(ch chan [][]byte, errs chan error) {
-			close(ch)
+			// close(ch)
 			close(errs)
 		}(ch, errs)
 
@@ -133,22 +134,7 @@ func readLinesBatching(raw io.Reader, batchSize int64, workers int) (chan [][]by
 	return ch, errs, nil
 }
 
-func mustGetTrackTime(rawTrack []byte) time.Time {
-	f := geojson.Feature{}
-	if err := f.UnmarshalJSON(rawTrack); err != nil {
-		log.Fatalln(err)
-	}
-	t, ok := f.Properties["Time"]
-	if !ok {
-		log.Fatalln("No time property")
-	}
-	trackTime, err := time.Parse(time.RFC3339, t.(string))
-	if err != nil {
-		log.Fatalln(err)
-	}
-	return trackTime
-}
-
+// tallyCatActivity tallies the activity for a single track.
 func tallyCatActivity(catActivity map[string]map[string]uint64, catTimes map[string]time.Time, f geojson.Feature) error {
 	// fmt.Println(string(b))
 
@@ -175,6 +161,7 @@ func tallyCatActivity(catActivity map[string]map[string]uint64, catTimes map[str
 	return nil
 }
 
+// tallyCatActivities garners activity data for a batch of tracks.
 func tallyCatActivities(features []geojson.Feature) (counts map[string]map[string]uint64, times map[string]time.Time, err error) {
 	counts = make(map[string]map[string]uint64)
 	times = make(map[string]time.Time)
@@ -186,6 +173,7 @@ func tallyCatActivities(features []geojson.Feature) (counts map[string]map[strin
 	return counts, times, err
 }
 
+// tallyBatchActivity garners activity data for a batch of tracks and writes it to the file.
 func tallyBatchActivity(batchN int64, features []geojson.Feature) error {
 	// start := time.Now()
 	// defer func() {
@@ -222,6 +210,8 @@ func tallyBatchActivity(batchN int64, features []geojson.Feature) error {
 	return nil
 }
 
+// tallyCatLoc tallies location (state, country) info for an individual track.
+// It uses a library with geo data built into the lib/binary to avoid dealing with shapefiles directly.
 func tallyCatLoc(catStates, catCountries map[string]map[string]uint64, catTimes map[string]time.Time, f geojson.Feature) error {
 	// fmt.Println(string(b))
 
@@ -258,6 +248,7 @@ func tallyCatLoc(catStates, catCountries map[string]map[string]uint64, catTimes 
 	return nil
 }
 
+// tallyCatLocs garners location (state, country) info for tracks.
 func tallyCatLocs(features []geojson.Feature) (states map[string]map[string]uint64, countries map[string]map[string]uint64, times map[string]time.Time, err error) {
 	states = make(map[string]map[string]uint64)
 	countries = make(map[string]map[string]uint64)
@@ -270,6 +261,7 @@ func tallyCatLocs(features []geojson.Feature) (states map[string]map[string]uint
 	return states, countries, times, err
 }
 
+// tallyBatchLoc garners location (state, country) info for tracks and writes them to their respective files.
 func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 	// start := time.Now()
 	// defer func() {
@@ -337,8 +329,8 @@ func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 }
 
 // tallyBatch runs on a batch of lines.
-// It short-circuits before unmarshalling the json if the ACTIVITY file exists.
-// I think the json ummarshalling is the bottleneck.
+// It short-circuits before unmarshalling if ALL the output files exist.
+// I think the JSON unmarshalling is the bottleneck.
 func tallyBatch(batchN int64, readLines [][]byte) error {
 	if rootOutputComplete(*flagBatchSize, batchN) {
 		log.Printf("Skipping batch %d, output already exists\n", batchN)
@@ -366,6 +358,27 @@ func tallyBatch(batchN int64, readLines [][]byte) error {
 	return nil
 }
 
+// mustGetTrackTime is a helper function used only in pretty printing progress.
+func mustGetTrackTime(rawTrack []byte) time.Time {
+	f := geojson.Feature{}
+	if err := f.UnmarshalJSON(rawTrack); err != nil {
+		log.Fatalln(err)
+	}
+	t, ok := f.Properties["Time"]
+	if !ok {
+		log.Fatalln("No time property")
+	}
+	trackTime, err := time.Parse(time.RFC3339, t.(string))
+	if err != nil {
+		log.Fatalln(err)
+	}
+	return trackTime
+}
+
+// See https://github.com/dc0d/workerpool for a dynamically expandable worker pool.
+// Would be cool to scale the pool aiming for a targeted memory consumption.
+// Memory seems to be the scarce resource, as opposed to CPU.
+
 func main() {
 	flag.Parse()
 
@@ -377,6 +390,8 @@ func main() {
 		log.Fatalln(err)
 	}
 
+	// workersWG is used for clean up processing after the reader has finished.
+	workersWG := new(sync.WaitGroup)
 	type work struct {
 		batchNumber int64
 		lines       [][]byte
@@ -386,34 +401,43 @@ func main() {
 		go func() {
 			for w := range workCh {
 				tallyBatch(w.batchNumber, w.lines)
+				workersWG.Done()
 			}
 		}()
 	}
 
 	batchCount := int64(0)
+	handleLinesBatch := func(lines [][]byte) {
+		batchCount++
+		lastTrackTime := mustGetTrackTime(lines[len(lines)-1])
+		nRoutines := runtime.NumGoroutine()
+		log.Println("Batch", batchCount, "GOROUTINES", nRoutines, lastTrackTime.Format(time.RFC3339))
+
+		// this will block if the buffered channel is full
+		workCh <- work{
+			batchNumber: batchCount,
+			lines:       lines,
+		}
+		workersWG.Add(1)
+	}
+
 readLoop:
 	for {
 		select {
 		case lines := <-linesCh:
-			batchCount++
-			lastTrackTime := mustGetTrackTime(lines[len(lines)-1])
-			nRoutines := runtime.NumGoroutine()
-			log.Println("Batch", batchCount, "GOROUTINES", nRoutines, lastTrackTime.Format(time.RFC3339))
-
-			workCh <- work{
-				batchNumber: batchCount,
-				lines:       lines,
-			}
-
-			// See https://github.com/dc0d/workerpool for a dynamically expandable worker pool.
-			// Would be cool to target memory consumption, and then scale aiming for that.
-
+			handleLinesBatch(lines)
 		case err := <-errCh:
 			if err == io.EOF {
+				log.Println("EOF")
 				break readLoop
 			}
 			log.Fatal(err)
 		}
 	}
+	// flush remaining lines
+	for len(linesCh) > 0 {
+		handleLinesBatch(<-linesCh)
+	}
+	workersWG.Wait()
 	close(workCh)
 }

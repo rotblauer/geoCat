@@ -12,11 +12,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/paulmach/orb/geojson"
 	"github.com/sams96/rgeo"
+	"github.com/shirou/gopsutil/v3/mem"
 )
 
 // city,user,count,latest_date
@@ -80,14 +82,20 @@ func tallyMapMap(m map[string]map[string]uint64, k1, k2 string, incr uint64) {
 // makes needlessly complex.
 // https://gist.github.com/lovasoa/38a207ecdefa1d60225403a644800818
 func GZLines(rawf io.Reader) (chan []byte, chan error, error) {
-	rawContents, err := gzip.NewReader(rawf)
-	if err != nil {
-		return nil, nil, err
-	}
+	// rawContents, err := gzip.NewReader(rawf)
+	// if err != nil {
+	// 	return nil, nil, err
+	// }
 
-	bufferedContents := bufio.NewReaderSize(rawContents, 1024*1024*1024*8) // default 4096
+	pr, pw := io.Pipe()
+	gzR, _ := gzip.NewReader(pr)
 
-	ch := make(chan []byte)
+	// bufferedContents := bufio.NewReaderSize(rawContents, 1024*1024*8) // default 4096
+
+	// pr, pw := io.Pipe()
+	// rawPiped, _ := gzip.NewReader(pr)
+
+	ch := make(chan []byte, 2)
 	errs := make(chan error)
 
 	go func(ch chan []byte, errs chan error, contents *bufio.Reader) {
@@ -151,12 +159,6 @@ func tallyCatActivities(features []geojson.Feature) (counts map[string]map[strin
 
 func tallyBatchActivity(batchN int64, features []geojson.Feature) error {
 	activityOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_activity_count.csv", batchN, len(features)))
-
-	// short circuit if file exists
-	if _, err := os.Stat(activityOutputFile); err == nil {
-		log.Println("File exists, skipping:", activityOutputFile)
-		return nil
-	}
 
 	counts, times, err := tallyCatActivities(features)
 
@@ -238,67 +240,81 @@ func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 	stateOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_state_count.csv", batchN, len(features)))
 	countryOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_country_count.csv", batchN, len(features)))
 
-	// short circuit if (state) file exists
-	if _, err := os.Stat(stateOutputFile); err == nil {
-		log.Println("File exists, skipping:", stateOutputFile)
-	} else {
-		states, countries, times, err := tallyCatLocs(features)
+	states, countries, times, err := tallyCatLocs(features)
 
-		// States
-		writeBuf := bytes.NewBuffer([]byte{})
-		writeBuf.Write([]byte("State,Name,date,counts\n")) // header
+	// States
+	writeBuf := bytes.NewBuffer([]byte{})
+	writeBuf.Write([]byte("State,Name,date,counts\n")) // header
 
-		for catName, m := range states {
-			for state, count := range m {
-				p := fmt.Sprintf("%s,%s,%s,%d\n", state, catName, times[catName].Format("2006-01-02"), count)
-				// log.Println(p)
-				_, err := writeBuf.Write([]byte(p))
-				if err != nil {
-					log.Fatalln(err)
-				}
+	for catName, m := range states {
+		for state, count := range m {
+			p := fmt.Sprintf("%s,%s,%s,%d\n", state, catName, times[catName].Format("2006-01-02"), count)
+			// log.Println(p)
+			_, err := writeBuf.Write([]byte(p))
+			if err != nil {
+				log.Fatalln(err)
 			}
 		}
-
-		// writeBuf to file
-		f, err := os.Create(stateOutputFile)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		_, _ = f.Write(writeBuf.Bytes())
-		_ = f.Close()
-		log.Printf("Wrote %s\n", stateOutputFile)
-
-		// Countries
-		writeBuf.Reset()
-		writeBuf.Write([]byte("Country,Name,date,counts\n")) // header
-
-		for catName, m := range countries {
-			for country, count := range m {
-				p := fmt.Sprintf("%s,%s,%s,%d\n", country, catName, times[catName].Format("2006-01-02"), count)
-				// log.Println(p)
-				_, err := writeBuf.Write([]byte(p))
-				if err != nil {
-					log.Fatalln(err)
-				}
-			}
-		}
-
-		// writeBuf to file
-		f, err = os.Create(countryOutputFile)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		_, _ = f.Write(writeBuf.Bytes())
-		_ = f.Close()
-		log.Printf("Wrote %s\n", countryOutputFile)
-
 	}
+
+	// writeBuf to file
+	f, err := os.Create(stateOutputFile)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	_, _ = f.Write(writeBuf.Bytes())
+	_ = f.Close()
+	log.Printf("Wrote %s\n", stateOutputFile)
+
+	// Countries
+	writeBuf.Reset()
+	writeBuf.Write([]byte("Country,Name,date,counts\n")) // header
+
+	for catName, m := range countries {
+		for country, count := range m {
+			p := fmt.Sprintf("%s,%s,%s,%d\n", country, catName, times[catName].Format("2006-01-02"), count)
+			// log.Println(p)
+			_, err := writeBuf.Write([]byte(p))
+			if err != nil {
+				log.Fatalln(err)
+			}
+		}
+	}
+
+	// writeBuf to file
+	f, err = os.Create(countryOutputFile)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	_, _ = f.Write(writeBuf.Bytes())
+	_ = f.Close()
+	log.Printf("Wrote %s\n", countryOutputFile)
+
 	return nil
 }
 
-func tallyBatch(batchN int64, readLines []geojson.Feature) error {
-	go tallyBatchActivity(batchN, readLines)
-	go tallyBatchLoc(batchN, readLines)
+// tallyBatch runs on a batch of lines.
+// It short-circuits before unmarshalling the json if the ACTIVITY file exists.
+// I think the json ummarshalling is the bottleneck.
+func tallyBatch(batchN int64, readLines [][]byte) error {
+	activityOutputFile := filepath.Join(*flagOutputRootFilepath, fmt.Sprintf("batch.%d.size.%d_activity_count.csv", batchN, len(readLines)))
+
+	// short circuit if file exists
+	if _, err := os.Stat(activityOutputFile); err == nil {
+		log.Println("File exists, skipping:", activityOutputFile)
+		return nil
+	}
+
+	readFeatures := make([]geojson.Feature, 0)
+	for _, line := range readLines {
+		f := geojson.Feature{}
+		if err := f.UnmarshalJSON(line); err != nil {
+			log.Fatalln(err)
+		}
+		readFeatures = append(readFeatures, f)
+	}
+	go tallyBatchActivity(batchN, readFeatures)
+	go tallyBatchLoc(batchN, readFeatures)
 	return nil
 }
 
@@ -317,13 +333,12 @@ func main() {
 	log.Printf("Read %d bytes in %s\n", len(bs), time.Since(readStart))
 
 	buf := bytes.NewBuffer(bs)
-
 	lineCh, errCh, err := GZLines(buf)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	readFeatures := make([]geojson.Feature, 0)
+	readLines := make([][]byte, 0)
 	n := int64(0)
 readLoop:
 	for {
@@ -337,19 +352,24 @@ readLoop:
 				// on":""}}
 			}
 			n++
-			f, err := geojson.UnmarshalFeature(line)
-			if err != nil {
-				log.Fatalln(err)
-			}
-			readFeatures = append(readFeatures, *f)
+			readLines = append(readLines, line)
 			if n%posBatch == 0 {
-				fmt.Printf("Read %d lines. GOROUTINES=%d\n", n, runtime.NumGoroutine())
-				tallyBatch(n/posBatch, readFeatures)
-				readFeatures = make([]geojson.Feature, 0)
-			}
-
-			if n > posBatch*1000 {
-				break readLoop
+				// Poor man's throttle.
+				once := sync.Once{}
+				nRoutines := runtime.NumGoroutine()
+				vmStat, _ := mem.VirtualMemory()
+				freeMB := vmStat.Free / (1024 * 1024)
+				for nRoutines > runtime.GOMAXPROCS(0) || freeMB < 4096 {
+					once.Do(func() {
+						log.Println("Throttling...")
+					})
+					time.Sleep(500 * time.Millisecond)
+					nRoutines = runtime.NumGoroutine()
+					freeMB = vmStat.Free / (1024 * 1024)
+				}
+				fmt.Printf("Read %d lines. GOROUTINES=%d Free memory=%s\n", n, nRoutines, strconv.FormatUint(freeMB, 10)+" MB")
+				go tallyBatch(n/posBatch, readLines)
+				readLines = make([][]byte, 0)
 			}
 
 		case err := <-errCh:
@@ -358,6 +378,10 @@ readLoop:
 			}
 			log.Fatal(err)
 		}
+	}
+	if len(readLines) > 0 {
+		fmt.Printf("Read %d lines. GOROUTINES=%d\n", n, runtime.NumGoroutine())
+		tallyBatch(n/posBatch, readLines)
 	}
 
 	fmt.Println("Global")

@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -176,6 +178,22 @@ func readLines(raw io.Reader, batchSize int64, workers int) (chan [][]byte, chan
 	return ch, errs, nil
 }
 
+func mustGetTrackTime(rawTrack []byte) time.Time {
+	f := geojson.Feature{}
+	if err := f.UnmarshalJSON(rawTrack); err != nil {
+		log.Fatalln(err)
+	}
+	t, ok := f.Properties["Time"]
+	if !ok {
+		log.Fatalln("No time property")
+	}
+	trackTime, err := time.Parse(time.RFC3339, t.(string))
+	if err != nil {
+		log.Fatalln(err)
+	}
+	return trackTime
+}
+
 func tallyCatActivity(catActivity map[string]map[string]uint64, catTimes map[string]time.Time, f geojson.Feature) error {
 	// fmt.Println(string(b))
 
@@ -304,6 +322,10 @@ func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 
 	for catName, m := range states {
 		for state, count := range m {
+			// sanitize state names, eg. "Rhondda, Cynon, Taff" => "Rhondda/ Cynon/ Taff"
+			if strings.Contains(state, ",") {
+				state = strings.ReplaceAll(state, ",", "/")
+			}
 			p := fmt.Sprintf("%s,%s,%s,%d\n", state, catName, times[catName].Format("2006-01-02"), count)
 			// log.Println(p)
 			_, err := writeBuf.Write([]byte(p))
@@ -408,7 +430,10 @@ readLoop:
 				// => {"type":"Feature","id":1,"geometry":{"type":"Point","coordinates":[-122.392033,37.789189]},"properties":{"Accuracy":0,"Elevation":0,"Heading":0,"Name":"jl","Speed":0,"Time":"2010-05-04T09:15:12Z","UUID":"","UnixTime":1272964512,"Version":""}}
 			}
 			batchCount++
-			log.Println("Batch", batchCount)
+
+			lastTrackTime := mustGetTrackTime(lines[len(lines)-1])
+
+			log.Println("Batch", batchCount, "GOROUTINES", runtime.NumGoroutine(), lastTrackTime.Format(time.RFC3339))
 			tallyBatch(batchCount, lines)
 			// if batchCount%posBatch == 0 {
 			// 	// // Poor man's throttle.

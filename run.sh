@@ -12,5 +12,3 @@ output_dir=${2:-/tmp/output}
 
 # time cat "${path_to_tracks}"|zcat|python3 main.py --output_dir $output_dir
 time cat "${path_to_tracks}"|zcat|python3 main.py --output_dir $output_dir --skip_existing
-
-

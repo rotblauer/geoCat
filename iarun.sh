@@ -2,8 +2,13 @@
 
 set -x
 
-time cat /home/ia/tdata/master.json.gz|zcat|\
-  python3 main.py --workers 4
+# time cat /home/ia/tdata/master.json.gz|zcat|\
+#   python3 main.py --workers 4
+
+go build -o gocat .
+time cat ~/tdata/master.json.gz | zcat | ./gocat
+time python3 main.py --skip_process_tracks --output ./go-output/ > /dev/null
+
 
 # nice time cat /home/ia/tdata/master.json.gz|zcat|python3
 # prlimit --as=16000000000 time cat /home/ia/tdata/master.json.gz|zcat|python3

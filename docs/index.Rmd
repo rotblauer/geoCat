@@ -2,27 +2,74 @@
 title: "geoCat"
 output: 
   flexdashboard::flex_dashboard:
-    orientation: columns
     vertical_layout: scroll
+    orientation: rows
     social: menu
     source_code: embed
 ---
+
+# Cat US
+
+Use these results without warranty or express or implied fitness for any purpose.  The results are not vetted for accuracy.  The results are not vetted for completeness.  The results are not vetted for usability
+
+- Limited to results from IACat and RyeCat
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 
 
 library(data.table)
+library(tidyverse)
 library(highcharter)
 library(dplyr)
 library(knitr)
-df <- fread("../output/output_state_count.csv_combined.csv")
+library(maps)
+library(plotly)
+data("county.fips")
+data("uscountygeojson")
+data("usgeojson")
+
+theme_set(theme_minimal())
+#the COUNTYFP column is a character column, so we don't want to convert it to numeric
+# df <- fread("../output/output_county_count.csv_combined.csv", colClasses = c("COUNTYFP" = "character"))
+df <-
+  fread(
+    "../output/output_state_count.csv_combined.csv",
+    colClasses = c("COUNTYFP" = "character", "STATEFP" = "character")
+  )
+# create a vector of the names that need to be mapped
+namesToMap <- c("Rye8", "RyePhone", "Rye13")
+# replace the names in the Name column with "RyeCat"
+# if the names are not in the Name column, throw a warning
+if(any(!namesToMap %in% df$Name)) warning("Some names are not in the data frame")
+
+df$OriginalName <- df$Name
+df$Name[df$Name %in% namesToMap] <- "RyeCat"
+
+
+
+# get the names that start with sofia or that contain Papa or that start with tonga
+tongaNames <- df$Name[grepl("^tonga", df$Name, ignore.case = TRUE)]
+papaNames <- df$Name[grepl("papa", df$Name, ignore.case = TRUE)]
+sofiaNames <- df$Name[grepl("^sofia", df$Name, ignore.case = TRUE)]
+IACatNames <- c(tongaNames, papaNames, sofiaNames, "iha")
+iaCatPatterns= c("^tonga", "papa", "^sofia", "iha")
+
+# map the IACatNames to IACat
+df$Name[df$Name %in% IACatNames] <- "IACat"
+
+# print the unique names that are not RyeCat or IACat
+# kable(table()
+missingNames <- unique(df$Name[!df$Name %in% c("RyeCat", "IACat")])
+
+
+# subset the data frame to only include the rows where the Name column is equal to "RyeCat" or "IACat"
+df <- df[Name %in% c("RyeCat", "IACat"), ]
 
 ```
 
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
-
 
 # function to sum the counts column by a given column name
 sum_by_column <- function(in_df, column_names) {
@@ -31,11 +78,11 @@ sum_by_column <- function(in_df, column_names) {
   return(in_df)
 }
 
-
-# kable(sum_by_column(in_df = df, column_names = c("STATE_NAME")))
-
 ```
 
+## State counts
+   
+### Total Cats per State
 ```{r}
 sumByState <-
   sum_by_column(in_df = df, column_names = c("STATE_NAME"))
@@ -55,7 +102,247 @@ highchart() %>%
   hc_colorAxis(stops = color_stops()) %>%
   hc_title(text = "Count of Tracks by State") %>%
   hc_add_theme(hc_theme_smpl()) %>%
-  hc_legend(enabled = FALSE) %>%
+  hc_legend(enabled = TRUE) %>%
   hc_tooltip(pointFormat = "{point.name}: {point.value}")
+
+```
+
+
+### Count of Tracks by County
+
+
+
+```{r}
+df$COUNTY_FIP=paste0(df$STATEFP,df$COUNTYFP)
+# 
+# stop()
+# Shannon County, SD (FIPS code = 46113) was renamed Oglala Lakota County and assigned anew FIPS code (46102) effective in 2014.
+df$COUNTY_FIP[df$COUNTY_FIP == "46102"] <- "46113"
+
+sumByCounty <-
+  sum_by_column(in_df = df, column_names = c("COUNTY_FIP"))
+# log10 transform the counts column
+sumByCounty$counts <- log10(sumByCounty$counts)
+#create a chlorealpleth map of the US
+highchart() %>%
+  hc_add_series_map(
+    uscountygeojson,
+    sumByCounty,
+    value = "counts",
+    joinBy = c("fips", "COUNTY_FIP"),
+    name = "Count") %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_colorAxis(stops = color_stops()) %>%
+  hc_title(text = "Count of Tracks by County") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) 
+# %>%
+#   hc_tooltip(pointFormat = "{point.name}: {point.value}")
+
+```
+
+
+
+## Cat wins
+
+### cat counts per state
+
+```{r}
+# sum the counts column by the Name and STATE_NAME columns
+sumByCatStateFull <-
+  sum_by_column(in_df = df, column_names = c("Name", "STATE_NAME"))
+
+sumByCatStateWin <-
+  sumByCatStateFull[, .SD[which.max(counts)], by = STATE_NAME]
+
+# create a color palette that maps RyeCat to bl
+colorPalette <- c("#0000FF","#FF0000")
+# create a named vector of colors
+colorVector <- setNames(colorPalette, unique(sumByCatStateWin$Name))
+# replace the color column with the color vector
+sumByCatStateWin$color <- colorVector[sumByCatStateWin$Name]
+# log10 transform the counts column
+#create a chlorealpleth map of the US
+highchart() %>%
+  hc_add_series_map(
+    usgeojson,
+    sumByCatStateWin,
+    value = "counts",
+    joinBy = c("name", "STATE_NAME"),
+    name = "Cat Winner",
+    dataLabels = list(enabled = TRUE, format = '{point.name}'),color =colorVector
+  ) %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_title(text = "Which Cat Wins Which State (+DC") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_tooltip(pointFormat = "{point.name} is won by {point.Name}: {point.value} total tracks")
+
+
+```
+
+
+### States Won per Cat {data-width=250}
+
+
+
+```{r}
+
+
+# count the number of states that each cat won
+total = sumByCatStateWin[, .N, by = Name]
+#create a ggplot bar chart of the number of states that each cat won
+# label by the cat name
+# color by the colorPalette
+# order by the number of states won
+g = ggplot(total, aes(x = Name, y = N, fill = Name)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Name), vjust = -0.5, size = 3) +
+  scale_fill_manual(values = colorVector) +
+  labs(x = "Cat", y = "Number of States(+DC) Won") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplotly(g)
+
+
+```
+
+
+### cat counts per county
+
+```{r}
+# sum the counts column by the Name and STATE_NAME columns
+sumByCatCountyFull <-
+  sum_by_column(in_df = df,
+                column_names = c("Name", "COUNTY_FIP"))
+sumByCatCountyWin <-
+  sumByCatCountyFull[, .SD[which.max(counts)], by = COUNTY_FIP]
+sumByCatCountyWin$color <- colorVector[sumByCatCountyWin$Name]
+
+#create a chlorealpleth map of the US
+highchart() %>%
+  hc_add_series_map(
+    uscountygeojson,
+    sumByCatCountyWin,
+    value = "counts",
+    joinBy = c("fips", "COUNTY_FIP"),
+    name = "Cat Winner",
+    color = colorVector
+  ) %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_title(text = "Which Cat Wins Which County") %>%
+  hc_add_theme(hc_theme_smpl()) %>%
+  hc_legend(enabled = FALSE) %>%
+  hc_tooltip(pointFormat = "{point.name} is won by {point.Name}: {point.value} total tracks")
+
+```
+
+
+### Counties Won per Cat {data-width=250}
+
+```{r}
+# count the number of states that each cat won
+total = sumByCatCountyWin[, .N, by = Name]
+#create a ggplot bar chart of the number of states that each cat won
+# label by the cat name
+# color by the colorPalette
+# order by the number of states won
+g=ggplot(total, aes(x = Name, y = N, fill = Name)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Name), vjust = -0.5, size = 3) +
+  scale_fill_manual(values = colorVector) +
+  labs(x = "Cat", y = "Number of Counties Won") +
+  theme_minimal() +
+  theme(legend.position = "none")
+ggplotly(g)
+
+
+```
+
+
+## Tracks per Cat per state
+
+
+
+### States Won per Cat {data-width=250}
+
+```{r}
+
+# get the second highest count for each state
+
+secondHighest <-
+  sumByCatStateFull[, .SD[order(-counts)[2]], by = STATE_NAME]
+# merge the sumByCatStateWin and secondHighest data frames by the STATE_NAME column
+diffByCatState <-
+  merge(sumByCatStateWin,
+        secondHighest,
+        by = "STATE_NAME",
+        all = TRUE)
+# calculate the difference between the counts columns
+diffByCatState$diff <-
+  diffByCatState$counts.x - diffByCatState$counts.y
+#log10 transform the diff column
+# if the difference is NA, set it to counts.x
+diffByCatState$diff[is.na(diffByCatState$diff)] <-
+  diffByCatState$counts.x[is.na(diffByCatState$diff)]
+
+diffByCatState$log10diff <- log10(diffByCatState$diff)
+
+diffByCatState$log10diff[diffByCatState$Name.x == "IACat"] <-
+  -diffByCatState$log10diff[diffByCatState$Name.x == "IACat"]
+
+p0 <- ggplot(data = diffByCatState,
+             mapping = aes(
+               x = log10diff,
+               y = reorder(STATE_NAME, log10diff),
+               color = Name.x
+             )) + scale_color_manual(values = colorVector) + geom_vline(xintercept = 0,
+                                                                         color = "black",
+                                                                         linetype = "dashed") + geom_point()
+# remove the legend
+p0 <- p0 + theme(legend.position = "none")
+
+ggplotly(p0)
+
+
+# stop()
+```
+
+
+
+### Tracks per Cat per state {data-width=250}
+
+```{r}
+# # https://rpubs.com/Wyclife/mapping_3D
+# # https://www.r-graph-gallery.com/327-chloropleth-map-from-geojson-with-ggplot2.html
+# 
+# library(sf)
+# shapeFile="../data/census/cb_2020_us_county_500k.zip"
+# shape=read_sf(shapeFile)
+# 
+# 
+# ggplot() + geom_sf(data = usgeojson)
+# 
+```
+
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+
+
+### cats represented in the analysis
+
+```{r}
+
+kable(unique(df$OriginalName))
+
+```
+
+### cats not represented in the analysis
+
+
+```{r}
+kable(missingNames)
 
 ```

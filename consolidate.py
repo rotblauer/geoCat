@@ -4,6 +4,8 @@ import os
 
 import pandas
 
+non_numeric_columns = ['STATEFP', 'COUNTYFP']
+
 
 # write a pandas dataframe to a csv file
 def write_dataframe_to_csv(dataframe, file):
@@ -17,7 +19,8 @@ def combine_files(file_paths):
     # iterate through the file paths
     for file_path in file_paths:
         # read the file as a pandas dataframe
-        dataframe = pandas.read_csv(file_path)
+        # convert the non-numeric columns to strings
+        dataframe = pandas.read_csv(file_path, dtype={column: str for column in non_numeric_columns})
 
         # add the dataframe to the list
         dataframes.append(dataframe)
@@ -51,16 +54,17 @@ def load_files(directory, suffix):
 def combine_and_write(directory, suffix, output_file):
     # load the file paths
     file_paths = load_files(directory, suffix)
+    print("found " + str(len(file_paths)) + " files for suffix " + suffix)
 
     # combine the files into a single dataframe
     combined_dataframe = combine_files(file_paths)
 
     # sums duplicates in all columns except the counts column
+
     summed_duplicates = sum_duplicates(combined_dataframe, list(combined_dataframe.columns[:-1]), 'counts')
 
     # write the dataframe to a csv file in the output directory
-
-    write_dataframe_to_csv(summed_duplicates, os.path.join(directory, output_file))
+    summed_duplicates.to_csv(os.path.join(directory, output_file), index=False)
 
     # return the combined dataframe
     return combined_dataframe
@@ -83,6 +87,12 @@ def sum_duplicates(dataframe, columns, column_to_sum):
     duplicates = find_duplicates(dataframe, columns)
     # group by the columns and sum the column to sum
     summed_duplicates = duplicates.groupby(columns)[column_to_sum].sum().reset_index()
+
+    # find the rows that are not duplicates
+    non_duplicates = dataframe.drop_duplicates(columns, keep=False)
+
+    # combine the non duplicates and the summed duplicates
+    summed_duplicates = pandas.concat([summed_duplicates, non_duplicates])
 
     # return the summed duplicates
     return summed_duplicates

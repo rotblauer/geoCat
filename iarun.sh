@@ -3,18 +3,18 @@
 set -x
 
 go build -o gocat .
-time cat ~/tdata/master.json.gz | zcat | ./gocat --output ./go-output --batch-size 500000 --workers 3
+time cat ~/tdata/master.json.gz | zcat | ./gocat --output ./go-output --batch-size 500000 --workers 6
 # ...
-# 2023/12/07 14:06:58 main.go:404: Batch 439 GOROUTINES 9 2023-11-14T17:23:48Z
-# 2023/12/07 14:06:59 main.go:313: Wrote go-output/batch.429.size.500000_state_count.csv
-# 2023/12/07 14:06:59 main.go:337: Wrote go-output/batch.429.size.500000_country_count.csv
-# 2023/12/07 14:07:00 main.go:223: Wrote go-output/batch.430.size.500000_activity_count.csv
-# 2023/12/07 14:07:01 main.go:313: Wrote go-output/batch.430.size.500000_state_count.csv
-# 2023/12/07 14:07:01 main.go:337: Wrote go-output/batch.430.size.500000_country_count.csv
+# 2023/12/07 15:32:15 main.go:302: Wrote go-output/batch.441.size.500000_state_count.csv
+# 2023/12/07 15:32:15 main.go:326: Wrote go-output/batch.441.size.500000_country_count.csv
+# 2023/12/07 15:32:15 main.go:208: Wrote go-output/batch.442.size.397690_activity_count.csv
+# 2023/12/07 15:32:16 main.go:302: Wrote go-output/batch.442.size.397690_state_count.csv
+# 2023/12/07 15:32:16 main.go:326: Wrote go-output/batch.442.size.397690_country_count.csv
 #
-# real    16m52.980s
-# user    122m18.348s
-# sys     1m47.588s
+# real    16m3.717s
+# user    131m28.411s
+# sys     1m43.818s
+
 
 mkdir -p ./go-output/go-output
 time python3 main.py --skip_process_tracks --output ./go-output/ > /dev/null

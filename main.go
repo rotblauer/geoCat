@@ -352,9 +352,19 @@ func tallyBatch(batchN int64, readLines [][]byte) error {
 		readFeatures = append(readFeatures, f)
 	}
 
-	go tallyBatchActivity(batchN, readFeatures)
-	go tallyBatchLoc(batchN, readFeatures)
-
+	errs := make(chan error, 2)
+	go func() {
+		errs <- tallyBatchActivity(batchN, readFeatures)
+	}()
+	go func() {
+		errs <- tallyBatchLoc(batchN, readFeatures)
+	}()
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			return err
+		}
+	}
+	close(errs)
 	return nil
 }
 
@@ -400,7 +410,9 @@ func main() {
 	for i := 0; i < *flagWorkers; i++ {
 		go func() {
 			for w := range workCh {
-				tallyBatch(w.batchNumber, w.lines)
+				if err := tallyBatch(w.batchNumber, w.lines); err != nil {
+					log.Fatalln(err)
+				}
 				workersWG.Done()
 			}
 		}()

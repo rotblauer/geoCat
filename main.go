@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"flag"
 	"fmt"
@@ -33,7 +34,7 @@ var tracksCount = uint32(0)
 
 func init() {
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
-	rg, _ = rgeo.New(rgeo.Cities10, rgeo.Provinces10, rgeo.Countries10 /* rgeo.Countries110 does not fix rgeo country lookup erors */)
+	rg, _ = rgeo.New(rgeo.Cities10, rgeo.Provinces10, rgeo.Countries10, rgeo.Countries110 /* rgeo.Countries110 does not fix rgeo country lookup erors */)
 }
 
 var ignoreReverseGeocodeErrors = []error{
@@ -48,6 +49,8 @@ var ignoreReverseGeocodeErrors = []error{
 var flagOutputRootFilepath = flag.String("output", filepath.Join(".", "go-output"), "Output root dir")
 var flagBatchSize = flag.Int64("batch-size", 500_000, "Batch size")
 var flagWorkers = flag.Int("workers", 4, "Number of workers")
+
+var reverseGeocodeFailedFilepath = filepath.Join(*flagOutputRootFilepath, "reverse_geocode_failed.json.gz")
 
 func roundFloat(val float64, precision uint) float64 {
 	ratio := math.Pow(10, float64(precision))
@@ -82,7 +85,7 @@ func rootOutputComplete(batchSize, batchNumber int64) bool {
 var aliases = map[*regexp.Regexp]string{
 	regexp.MustCompile(`(?i)(Big.*P.*|Isaac.*|.*moto.*|iha)`): "ia",
 	regexp.MustCompile(`(?i)(Big.*Ma.*)`):                     "jr",
-	regexp.MustCompile("(?i)(Rye.*|Kitty.*)"):                 "jl",
+	regexp.MustCompile("(?i)(Rye.*|Kitty.*)"):                 "rye",
 	regexp.MustCompile("(?i)Kayleigh.*"):                      "kd",
 	regexp.MustCompile("(?i)(KK.*|kek)"):                      "kk",
 	regexp.MustCompile("(?i)Bob.*"):                           "rj",
@@ -226,7 +229,7 @@ func tallyBatchActivity(batchN int64, features []geojson.Feature) error {
 		}
 	}
 
-	activityOutputFile := getActivityOutputFilepath(*flagBatchSize, batchN)
+	activityOutputFile := getActivityOutputFilepath(int64(len(features)), batchN)
 	if err := writeFileCreating(activityOutputFile, writeBuf); err != nil {
 		return err
 	}
@@ -275,11 +278,25 @@ func tallyCatLoc(catStates, catCountries map[string]map[string]uint64, catTimes 
 				// 	f.Properties["Name"], catTime.Format(time.RFC3339), lon, lat,
 				// 	debug)
 				atomic.AddUint32(&geocodeErrorCount, 1)
-				err = nil
+
+				// write to file
+				b, _ := f.MarshalJSON()
+				fi, err := os.OpenFile(reverseGeocodeFailedFilepath, os.O_WRONLY|os.O_APPEND, 0644)
+				if err != nil {
+					if os.IsNotExist(err) {
+						os.Create(reverseGeocodeFailedFilepath)
+						fi, _ = os.OpenFile(reverseGeocodeFailedFilepath, os.O_WRONLY|os.O_APPEND, 0644)
+					}
+				}
+				wr := gzip.NewWriter(fi)
+				if _, err := wr.Write(b); err != nil {
+					return err
+				}
+				_ = wr.Close()
+				_ = fi.Close()
+
+				return nil
 			}
-		}
-		if err != nil {
-			return err
 		}
 	}
 	// Ideally this returns:
@@ -335,7 +352,7 @@ func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 	}
 
 	// writeBuf to file
-	stateOutputFile := getStateOutputFilepath(*flagBatchSize, batchN)
+	stateOutputFile := getStateOutputFilepath(int64(len(features)), batchN)
 	if err := writeFileCreating(stateOutputFile, writeBuf); err != nil {
 		return err
 	}
@@ -357,7 +374,7 @@ func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 	}
 
 	// writeBuf to file
-	countryOutputFile := getCountryOutputFilepath(*flagBatchSize, batchN)
+	countryOutputFile := getCountryOutputFilepath(int64(len(features)), batchN)
 	if err := writeFileCreating(countryOutputFile, writeBuf); err != nil {
 		return err
 	}

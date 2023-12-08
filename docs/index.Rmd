@@ -37,6 +37,8 @@ df <-
     "../output/output_state_count.csv_combined.csv",
     colClasses = c("COUNTYFP" = "character", "STATEFP" = "character")
   )
+
+df$NAME = paste0(df$STATE_NAME, ", ", df$NAME, "-", df$COUNTYFP)
 # create a vector of the names that need to be mapped
 namesToMap <- c("Rye8", "RyePhone", "Rye13")
 # replace the names in the Name column with "RyeCat"
@@ -215,7 +217,7 @@ ggplotly(g)
 # sum the counts column by the Name and STATE_NAME columns
 sumByCatCountyFull <-
   sum_by_column(in_df = df,
-                column_names = c("Name", "COUNTY_FIP"))
+                column_names = c("Name", "COUNTY_FIP","NAME"))
 sumByCatCountyWin <-
   sumByCatCountyFull[, .SD[which.max(counts)], by = COUNTY_FIP]
 sumByCatCountyWin$color <- colorVector[sumByCatCountyWin$Name]
@@ -265,18 +267,18 @@ ggplotly(g)
 
 
 
-### States Won per Cat {data-width=250}
+### State diff per Cat
 
 ```{r}
 
 # get the second highest count for each state
 
-secondHighest <-
+secondHighestState <-
   sumByCatStateFull[, .SD[order(-counts)[2]], by = STATE_NAME]
-# merge the sumByCatStateWin and secondHighest data frames by the STATE_NAME column
+# merge the sumByCatStateWin and secondHighestState data frames by the STATE_NAME column
 diffByCatState <-
   merge(sumByCatStateWin,
-        secondHighest,
+        secondHighestState,
         by = "STATE_NAME",
         all = TRUE)
 # calculate the difference between the counts columns
@@ -303,26 +305,65 @@ p0 <- ggplot(data = diffByCatState,
 # remove the legend
 p0 <- p0 + theme(legend.position = "none")
 
+# add x axis label
+p0 <- p0 + labs(x = "log10 difference in number of tracks won")
+# add y axis label
+p0 <- p0 + labs(y = "State")
 ggplotly(p0)
 
 
 # stop()
 ```
 
-
-
-### Tracks per Cat per state {data-width=250}
+### County diff per Cat
 
 ```{r}
-# # https://rpubs.com/Wyclife/mapping_3D
-# # https://www.r-graph-gallery.com/327-chloropleth-map-from-geojson-with-ggplot2.html
-# 
-# library(sf)
-# shapeFile="../data/census/cb_2020_us_county_500k.zip"
-# shape=read_sf(shapeFile)
-# 
-# 
-# ggplot() + geom_sf(data = usgeojson)
+secondHighestCounty <-
+  sumByCatCountyFull[, .SD[order(-counts)[2]], by = COUNTY_FIP]
+secondHighestCounty$NAME = NULL
+diffByCatCounty <-
+  merge(sumByCatCountyWin,
+        secondHighestCounty,
+        by = "COUNTY_FIP",
+        all = TRUE)
+diffByCatCounty$diff <-
+  diffByCatCounty$counts.x - diffByCatCounty$counts.y
+diffByCatCounty$diff[is.na(diffByCatCounty$diff)] <-
+  diffByCatCounty$counts.x[is.na(diffByCatCounty$diff)]
+
+diffByCatCounty$log10diff <- log10(diffByCatCounty$diff)
+# set non finite values to 0
+diffByCatCounty$log10diff[!is.finite(diffByCatCounty$log10diff)] <-
+  0
+
+diffByCatCounty$log10diff[diffByCatCounty$Name.x == "IACat"] <-
+  -diffByCatCounty$log10diff[diffByCatCounty$Name.x == "IACat"]
+
+p1 <- ggplot(data = diffByCatCounty,
+             mapping = aes(x = log10diff,
+                           y = reorder(NAME, log10diff),
+                           color = Name.x)) + scale_color_manual(values = colorVector) + geom_vline(xintercept = 0,
+                                                                                                    color = "black",
+                                                                                                    linetype = "dashed") + geom_point()
+# remove the legend
+p1 <- p1 + theme(legend.position = "none")
+# remove y axis labels
+p1 <- p1 + theme(axis.text.y = element_blank())
+# remove y axis ticks
+p1 <- p1 + theme(axis.ticks.y = element_blank())
+# remove y axis title
+# p1 <- p1 + theme(axis.title.y = element_blank())
+# remove all grid lines
+p1 <- p1 + theme(panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.background = element_blank())
+
+p1 <- p1 + labs(x = "log10 difference in number of tracks won")
+p1 <- p1 + labs(y = "County")
+
+ggplotly(p1)
+
+# stop()
 # 
 ```
 

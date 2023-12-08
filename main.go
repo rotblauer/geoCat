@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/paulmach/orb/geojson"
@@ -26,16 +28,19 @@ import (
 // activity,user,count,latest_date
 
 var rg *rgeo.Rgeo
+var geocodeErrorCount = uint32(0)
+var tracksCount = uint32(0)
 
 func init() {
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
 	rg, _ = rgeo.New(rgeo.Cities10, rgeo.Provinces10, rgeo.Countries10 /* rgeo.Countries110 does not fix rgeo country lookup erors */)
 }
 
-var ignoreReverseGeocodeErrors = []string{
-	"country not found",
+var ignoreReverseGeocodeErrors = []error{
+	rgeo.ErrLocationNotFound,
 	// 140.74868774414062 41.79047775268555 => https://www.google.com/maps/place/41%C2%B047'25.4%22N+140%C2%B044'55.0%22E/@41.7816932,140.753944,13.79z/data=!4m4!3m3!8m2!3d41.7904!4d140.7486?entry=ttu
 	// -90.2296142578125 38.604461669921875 => https://www.google.com/maps/place/38%C2%B036'16.1%22N+90%C2%B013'46.6%22W/@38.5929618,-90.2187837,13.79z/data=!4m4!3m3!8m2!3d38.6044617!4d-90.2296143?entry=ttu
+	// -69.989167 43.856167 https://www.google.com/maps/place/43%C2%B051'22.2%22N+69%C2%B059'21.0%22W/@43.8549922,-69.9872135,12.63z/data=!4m4!3m3!8m2!3d43.856167!4d-69.989167?entry=ttu
 	// https://github.com/sams96/rgeo#usage
 }
 
@@ -262,10 +267,14 @@ func tallyCatLoc(catStates, catCountries map[string]map[string]uint64, catTimes 
 	var loc rgeo.Location
 	loc, err = rg.ReverseGeocode([]float64{lon, lat})
 	if err != nil {
+		// FIXME This happens a lot, weirdly. Check the ignored errors for commented context.
 		for _, ignore := range ignoreReverseGeocodeErrors {
-			if strings.Contains(err.Error(), ignore) {
-				// FIXME This happens a lot, weirdly. Check the ignored errors for commented context.
-				// log.Println("WARN: country not found", f.Properties["Name"], catTime.Format(time.RFC3339), lon, lat)
+			if errors.Is(err, ignore) {
+				// debug := spew.Sdump(loc)
+				// log.Printf("WARN: country not found: %s %v %v %v\n%s\n",
+				// 	f.Properties["Name"], catTime.Format(time.RFC3339), lon, lat,
+				// 	debug)
+				atomic.AddUint32(&geocodeErrorCount, 1)
 				err = nil
 			}
 		}
@@ -437,6 +446,7 @@ func main() {
 				if err := tallyBatch(w.batchNumber, w.lines); err != nil {
 					log.Fatalln(err)
 				}
+				atomic.AddUint32(&tracksCount, uint32(len(w.lines)))
 				workersWG.Done()
 			}
 		}()
@@ -476,4 +486,5 @@ readLoop:
 	}
 	workersWG.Wait()
 	close(workCh)
+	log.Printf("Done. Total tracks: %d. Ignored %d reverse geocode errors.\n", tracksCount, geocodeErrorCount)
 }

@@ -18,6 +18,7 @@ def combine_files(file_paths):
 
     # iterate through the file paths
     for file_path in file_paths:
+        print("reading " + file_path)
         # read the file as a pandas dataframe
         # convert the non-numeric columns to strings
         dataframe = pandas.read_csv(file_path, dtype={column: str for column in non_numeric_columns})

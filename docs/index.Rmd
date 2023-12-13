@@ -8,7 +8,7 @@ output:
     source_code: embed
 ---
 
-# Cat US
+# Cat Counts
 
 Use these results without warranty or express or implied fitness for any purpose.  The results are not vetted for accuracy.  The results are not vetted for completeness.  The results are not vetted for usability
 
@@ -25,13 +25,19 @@ library(dplyr)
 library(knitr)
 library(maps)
 library(plotly)
+library(nrgiR)
+
 data("county.fips")
 data("uscountygeojson")
 data("usgeojson")
 
 theme_set(theme_minimal())
-#the COUNTYFP column is a character column, so we don't want to convert it to numeric
-# df <- fread("../output/output_county_count.csv_combined.csv", colClasses = c("COUNTYFP" = "character"))
+
+
+dfCountry <-
+  fread("../output/output_country_count.csv_combined.csv")
+
+
 df <-
   fread(
     "../output/output_state_count.csv_combined.csv",
@@ -40,25 +46,31 @@ df <-
 
 df$NAME = paste0(df$STATE_NAME, ", ", df$NAME, "-", df$COUNTYFP)
 # create a vector of the names that need to be mapped
-namesToMap <- c("Rye8", "RyePhone", "Rye13")
-# replace the names in the Name column with "RyeCat"
-# if the names are not in the Name column, throw a warning
-if(any(!namesToMap %in% df$Name)) warning("Some names are not in the data frame")
+mapNames <- function(df) {
+  namesToMap <- c("Rye8", "RyePhone", "Rye13")
+  # replace the names in the Name column with "RyeCat"
+  # if the names are not in the Name column, throw a warning
+  if(any(!namesToMap %in% df$Name)) warning("Some names are not in the data frame")
+  
+  df$OriginalName <- df$Name
+  df$Name[df$Name %in% namesToMap] <- "RyeCat"
+  
+  
+  
+  # get the names that start with sofia or that contain Papa or that start with tonga
+  tongaNames <- df$Name[grepl("^tonga", df$Name, ignore.case = TRUE)]
+  papaNames <- df$Name[grepl("papa", df$Name, ignore.case = TRUE)]
+  sofiaNames <- df$Name[grepl("^sofia", df$Name, ignore.case = TRUE)]
+  IACatNames <- c(tongaNames, papaNames, sofiaNames, "iha")
+  iaCatPatterns= c("^tonga", "papa", "^sofia", "iha")
+  
+  # map the IACatNames to IACat
+  df$Name[df$Name %in% IACatNames] <- "IACat"
+  return(df)
+}
 
-df$OriginalName <- df$Name
-df$Name[df$Name %in% namesToMap] <- "RyeCat"
-
-
-
-# get the names that start with sofia or that contain Papa or that start with tonga
-tongaNames <- df$Name[grepl("^tonga", df$Name, ignore.case = TRUE)]
-papaNames <- df$Name[grepl("papa", df$Name, ignore.case = TRUE)]
-sofiaNames <- df$Name[grepl("^sofia", df$Name, ignore.case = TRUE)]
-IACatNames <- c(tongaNames, papaNames, sofiaNames, "iha")
-iaCatPatterns= c("^tonga", "papa", "^sofia", "iha")
-
-# map the IACatNames to IACat
-df$Name[df$Name %in% IACatNames] <- "IACat"
+df <- mapNames(df)
+dfCountry <- mapNames(dfCountry)
 
 # print the unique names that are not RyeCat or IACat
 # kable(table()
@@ -67,6 +79,26 @@ missingNames <- unique(df$Name[!df$Name %in% c("RyeCat", "IACat")])
 
 # subset the data frame to only include the rows where the Name column is equal to "RyeCat" or "IACat"
 df <- df[Name %in% c("RyeCat", "IACat"), ]
+# stop()
+dfCountry <- dfCountry[Name %in% c("RyeCat", "IACat"), ]
+
+toiso3 <- function(SOV_A3) {
+  # Need to convert "FR1" "US1" "GB1" "NL1" "CH1" to valid ISO3 codes
+  iso3 = gsub("FR1", "FRA", SOV_A3)
+  iso3 = gsub("US1", "USA", iso3)
+  iso3 = gsub("GB1", "GBR", iso3)
+  iso3 = gsub("NL1", "NLD", iso3)
+  iso3 = gsub("CH1", "CHE", iso3)
+  return(iso3)
+}
+
+
+print(iso)
+dfCountry$iso3 = toiso3(dfCountry$SOV_A3)
+# stop if there are any countries that are not in the iso data frame
+if(any(!dfCountry$iso3 %in% iso$iso3)) stop("There are countries that are not in the iso data frame")
+
+
 
 ```
 
@@ -82,6 +114,48 @@ sum_by_column <- function(in_df, column_names) {
 
 ```
 
+## World counts
+
+### Total Cats per Country
+
+```{r}
+l <- list(color = toRGB("#d1d1d1"), width = 0.5)
+#Specify map projection and options
+g <- list(
+  showframe = FALSE,
+  showcoastlines = FALSE,
+  projection = list(type = 'orthographic'),
+  resolution = '200',
+  showcountries = TRUE,
+  countrycolor = '#d1d1d1',
+  showocean = TRUE,
+  oceancolor = '#c9d2e0',
+  showlakes = TRUE,
+  lakecolor = '#99c0db',
+  showrivers = TRUE,
+  rivercolor = '#99c0db'
+)
+
+sumByCountry <-
+  sum_by_column(in_df = dfCountry, column_names = c("iso3"))
+
+sumByCountry$counts <- log10(sumByCountry$counts)
+
+p <- plot_geo(sumByCountry) %>%
+  add_trace(
+    z = ~ counts,
+    color = ~ counts,
+    colors = 'viridis',
+    text = ~ iso3,
+    locations = ~ iso3,
+    marker = list(line = l)
+  ) %>%
+  colorbar(title = 'Log10 counts of cats by Country') %>%
+  layout(title = '', geo = g)
+p
+
+# stop()
+```
 ## State counts
    
 ### Total Cats per State

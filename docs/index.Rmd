@@ -33,7 +33,9 @@ data("usgeojson")
 
 theme_set(theme_minimal())
 
-
+dfActivity <-
+  fread("../output/output_activity_count.csv_combined.csv")
+# stop()
 dfCountry <-
   fread("../output/output_country_count.csv_combined.csv")
 
@@ -71,16 +73,17 @@ mapNames <- function(df) {
 
 df <- mapNames(df)
 dfCountry <- mapNames(dfCountry)
+nameLimits=c("RyeCat", "IACat")
 
 # print the unique names that are not RyeCat or IACat
 # kable(table()
-missingNames <- unique(df$Name[!df$Name %in% c("RyeCat", "IACat")])
+missingNames <- unique(df$Name[!df$Name %in%nameLimits])
 
 
 # subset the data frame to only include the rows where the Name column is equal to "RyeCat" or "IACat"
-df <- df[Name %in% c("RyeCat", "IACat"), ]
+df <- df[Name %in% nameLimits, ]
 # stop()
-dfCountry <- dfCountry[Name %in% c("RyeCat", "IACat"), ]
+dfCountry <- dfCountry[Name %in%nameLimits, ]
 
 toiso3 <- function(SOV_A3) {
   # Need to convert "FR1" "US1" "GB1" "NL1" "CH1" to valid ISO3 codes
@@ -150,12 +153,42 @@ p <- plot_geo(sumByCountry) %>%
     locations = ~ iso3,
     marker = list(line = l)
   ) %>%
-  colorbar(title = 'Log10 counts of cats by Country') %>%
-  layout(title = '', geo = g)
-p
+  layout(title = 'log10 total counts', geo = g)
+# remove the colorbar
+hide_colorbar(p)
 
 # stop()
 ```
+
+### Cat wins per Country
+
+```{r}
+# create a data frame of the cat wins by country
+sumByCountryCat <-
+  sum_by_column(in_df = dfCountry, column_names = c("iso3","Name"))
+# log10 transform the counts column
+sumByCountryCat$counts <- log10(sumByCountryCat$counts)
+# create a data frame of the cat wins by country
+sumByCountryCatWin= sumByCountryCat[, .SD[which.max(counts)], by = iso3]
+# set counts won by IACat to negative
+sumByCountryCatWin$counts[sumByCountryCatWin$Name == "RyeCat"] <-
+  -sumByCountryCatWin$counts[sumByCountryCatWin$Name == "RyeCat"]
+
+p <- plot_geo(sumByCountryCatWin) %>%
+  add_trace(
+    z = ~ counts,
+    color = ~ Name,
+    colors = 'viridis',
+    text = ~ iso3,
+    locations = ~ iso3,
+    marker = list(line = l)
+  ) %>%
+  layout(title = 'log10 counts won by', geo = g)
+hide_colorbar(p)
+
+```
+
+
 ## State counts
    
 ### Total Cats per State
@@ -461,3 +494,79 @@ kable(unique(df$OriginalName))
 kable(missingNames)
 
 ```
+
+
+# Cat Acts
+
+## Per Day
+
+### cat activity counts per day
+
+```{r}
+dfActivity=mapNames(dfActivity)
+# limt to Names in nameLimit
+dfActivity <- dfActivity[Name %in% nameLimits,]
+
+dfActivity$baseCounts =dfActivity$counts
+# set IACat to negative
+dfActivity$counts[dfActivity$Name == "IACat"] <- -dfActivity$counts[dfActivity$Name == "IACat"]
+
+# column names of dfActivity are "Activity" "Name"     "date"     "counts"  
+
+# remove blank Activity
+toRemove=c("","Unknown","Stationary","Driving")
+dfActivity <- dfActivity[which(!dfActivity$Activity %in% toRemove), ]
+dfActivity$date <- as.Date(dfActivity$date)
+dfActivity$Year_Month <- format(as.Date(dfActivity$date), "%Y-%m")
+
+sumByCatActivity <-sum_by_column(dfActivity, c("Name", "Activity", "Year_Month"))
+
+# convert Year_Month to date, looks like this "2020-06"
+sumByCatActivity$Year_Month <- as.Date(paste0(sumByCatActivity$Year_Month, "-01"))
+
+# plot counts by day
+p2 <- ggplot(data = dfActivity,
+             mapping = aes(x = date,
+                           y = counts,
+                           color = Name)) + geom_point(size=1) + scale_color_manual(values = colorVector) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + labs(x = "Counts per Day", y = "Number of Tracks")
+
+p2 = p2 + facet_wrap( ~ Activity, scales = "free_y")
+
+ggplotly(p2)
+
+```
+
+
+### cat activity days per count
+
+```{r}
+
+#histogram of counts colored by Name
+p2 <- ggplot(data = dfActivity,
+             mapping = aes(x = baseCounts,
+                           color = Name)) + geom_histogram(bins=100, position="identity",alpha=.5) + scale_color_manual(values = colorVector) + labs(x = "Counts per Day", y = "Number of Days")
+# p2 + facet_wrap( ~ Activity+Name, scales = "free_y")
+#log scale the x axis
+p2=p2 + facet_wrap( ~ Activity, scales = "free_y") + scale_x_log10()
+
+ggplotly(p2)
+```
+
+
+## Per Month
+
+
+### cat activity counts per month
+
+```{r}
+# plot counts by month
+p3 <- ggplot(data = sumByCatActivity,
+             mapping = aes(x = Year_Month,
+                           y = counts,
+                           color = Name)) + geom_point(size=1) + scale_color_manual(values = colorVector) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + labs(x = "Counts per Day", y = "Number of Tracks")
+p3 + facet_wrap( ~ Activity, scales = "free_y")
+
+
+```
+
+

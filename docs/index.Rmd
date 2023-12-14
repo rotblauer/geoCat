@@ -509,7 +509,6 @@ dfActivity <- dfActivity[Name %in% nameLimits,]
 
 dfActivity$baseCounts =dfActivity$counts
 # set IACat to negative
-dfActivity$counts[dfActivity$Name == "IACat"] <- -dfActivity$counts[dfActivity$Name == "IACat"]
 
 # column names of dfActivity are "Activity" "Name"     "date"     "counts"  
 
@@ -524,11 +523,13 @@ sumByCatActivity <-sum_by_column(dfActivity, c("Name", "Activity", "Year_Month")
 # convert Year_Month to date, looks like this "2020-06"
 sumByCatActivity$Year_Month <- as.Date(paste0(sumByCatActivity$Year_Month, "-01"))
 
+dfActivity$counts[dfActivity$Name == "IACat"] <- -dfActivity$counts[dfActivity$Name == "IACat"]
+
 # plot counts by day
 p2 <- ggplot(data = dfActivity,
              mapping = aes(x = date,
                            y = counts,
-                           color = Name)) + geom_point(size=1) + scale_color_manual(values = colorVector) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + labs(x = "Counts per Day", y = "Number of Tracks")
+                           color = Name)) + geom_point(size=1) + scale_color_manual(values = colorVector) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + labs(x = "Date", y = "Number of Tracks")
 
 p2 = p2 + facet_wrap( ~ Activity, scales = "free_y")
 
@@ -544,7 +545,7 @@ ggplotly(p2)
 #histogram of counts colored by Name
 p2 <- ggplot(data = dfActivity,
              mapping = aes(x = baseCounts,
-                           color = Name)) + geom_histogram(bins=100, position="identity",alpha=.5) + scale_color_manual(values = colorVector) + labs(x = "Counts per Day", y = "Number of Days")
+                           color = Name)) + geom_histogram(bins=100, position="identity",alpha=.5) + scale_color_manual(values = colorVector) + labs(x = "Counts Per Day", y = "Number of Days")
 # p2 + facet_wrap( ~ Activity+Name, scales = "free_y")
 #log scale the x axis
 p2=p2 + facet_wrap( ~ Activity, scales = "free_y") + scale_x_log10()
@@ -563,10 +564,24 @@ ggplotly(p2)
 p3 <- ggplot(data = sumByCatActivity,
              mapping = aes(x = Year_Month,
                            y = counts,
-                           color = Name)) + geom_point(size=1) + scale_color_manual(values = colorVector) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + labs(x = "Counts per Day", y = "Number of Tracks")
-p3 + facet_wrap( ~ Activity, scales = "free_y")
+                           color = Name)) + geom_point(size=1) + scale_color_manual(values = colorVector) + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + labs(x = "Date", y = "Number of Tracks")
+p3=p3 + facet_wrap( ~ Activity, scales = "free_y")
 
+ggplotly(p3)
 
 ```
 
+### cat activity months per count
+
+```{r}
+
+#histogram of counts colored by Name
+p3 <- ggplot(data = sumByCatActivity,
+             mapping = aes(x = counts,
+                           color = Name)) + geom_histogram(bins=100, position="identity",alpha=.5) + scale_color_manual(values = colorVector) + labs(x = "Counts Per Month", y = "Number of Months")
+# p3 + facet_wrap( ~ Activity+Name, scales = "free_y")
+#log scale the x axis
+p3=p3 + facet_wrap( ~ Activity, scales = "free_y") + scale_x_log10()
+
+ggplotly(p3)
 

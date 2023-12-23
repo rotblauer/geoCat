@@ -578,10 +578,12 @@ ggplotly(p3)
 #histogram of counts colored by Name
 p3 <- ggplot(data = sumByCatActivity,
              mapping = aes(x = counts,
-                           color = Name)) + geom_histogram(bins=100, position="identity",alpha=.5) + scale_color_manual(values = colorVector) + labs(x = "Counts Per Month", y = "Number of Months")
+                           color = Name)) + geom_histogram(bins = 100,
+                                                           position = "identity",
+                                                           alpha = .5) + scale_color_manual(values = colorVector) + labs(x = "Counts Per Month", y = "Number of Months")
 # p3 + facet_wrap( ~ Activity+Name, scales = "free_y")
 #log scale the x axis
-p3=p3 + facet_wrap( ~ Activity, scales = "free_y") + scale_x_log10()
+p3 = p3 + facet_wrap(~ Activity, scales = "free_y") + scale_x_log10()
 
 ggplotly(p3)
 

@@ -155,6 +155,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', type=str, default='output',
                         help='the directory to write the output files to')
     # argument for crs
+    # EPSG:4269 vs WGS84
     parser.add_argument('--crs', type=str, default='EPSG:4269',
                         help='the crs to use for the data')
     # argument for workers

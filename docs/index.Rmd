@@ -92,6 +92,8 @@ toiso3 <- function(SOV_A3) {
   iso3 = gsub("GB1", "GBR", iso3)
   iso3 = gsub("NL1", "NLD", iso3)
   iso3 = gsub("CH1", "CHE", iso3)
+  # convert cuba
+  iso3 = gsub("CU1", "CUB", iso3)
   return(iso3)
 }
 

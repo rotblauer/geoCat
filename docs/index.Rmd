@@ -49,7 +49,7 @@ df <-
 df$NAME = paste0(df$STATE_NAME, ", ", df$NAME, "-", df$COUNTYFP)
 # create a vector of the names that need to be mapped
 mapNames <- function(df) {
-  namesToMap <- c("Rye8", "RyePhone", "Rye13")
+  namesToMap <- c("Rye8", "RyePhone", "Rye13", "Rye16")
   # replace the names in the Name column with "RyeCat"
   # if the names are not in the Name column, throw a warning
   if(any(!namesToMap %in% df$Name)) warning("Some names are not in the data frame")

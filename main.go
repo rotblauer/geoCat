@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/paulmach/orb/geojson"
@@ -26,16 +29,19 @@ import (
 // activity,user,count,latest_date
 
 var rg *rgeo.Rgeo
+var geocodeErrorCount = uint32(0)
+var tracksCount = uint32(0)
 
 func init() {
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
-	rg, _ = rgeo.New(rgeo.Cities10, rgeo.Provinces10, rgeo.Countries10 /* rgeo.Countries110 does not fix rgeo country lookup erors */)
+	rg, _ = rgeo.New(rgeo.Cities10, rgeo.Provinces10, rgeo.Countries10, rgeo.Countries110 /* rgeo.Countries110 does not fix rgeo country lookup erors */)
 }
 
-var ignoreReverseGeocodeErrors = []string{
-	"country not found",
+var ignoreReverseGeocodeErrors = []error{
+	rgeo.ErrLocationNotFound,
 	// 140.74868774414062 41.79047775268555 => https://www.google.com/maps/place/41%C2%B047'25.4%22N+140%C2%B044'55.0%22E/@41.7816932,140.753944,13.79z/data=!4m4!3m3!8m2!3d41.7904!4d140.7486?entry=ttu
 	// -90.2296142578125 38.604461669921875 => https://www.google.com/maps/place/38%C2%B036'16.1%22N+90%C2%B013'46.6%22W/@38.5929618,-90.2187837,13.79z/data=!4m4!3m3!8m2!3d38.6044617!4d-90.2296143?entry=ttu
+	// -69.989167 43.856167 https://www.google.com/maps/place/43%C2%B051'22.2%22N+69%C2%B059'21.0%22W/@43.8549922,-69.9872135,12.63z/data=!4m4!3m3!8m2!3d43.856167!4d-69.989167?entry=ttu
 	// https://github.com/sams96/rgeo#usage
 }
 
@@ -43,6 +49,8 @@ var ignoreReverseGeocodeErrors = []string{
 var flagOutputRootFilepath = flag.String("output", filepath.Join(".", "go-output"), "Output root dir")
 var flagBatchSize = flag.Int64("batch-size", 500_000, "Batch size")
 var flagWorkers = flag.Int("workers", 4, "Number of workers")
+
+var reverseGeocodeFailedFilepath = filepath.Join(*flagOutputRootFilepath, "reverse_geocode_failed.json.gz")
 
 func roundFloat(val float64, precision uint) float64 {
 	ratio := math.Pow(10, float64(precision))
@@ -77,7 +85,7 @@ func rootOutputComplete(batchSize, batchNumber int64) bool {
 var aliases = map[*regexp.Regexp]string{
 	regexp.MustCompile(`(?i)(Big.*P.*|Isaac.*|.*moto.*|iha)`): "ia",
 	regexp.MustCompile(`(?i)(Big.*Ma.*)`):                     "jr",
-	regexp.MustCompile("(?i)(Rye.*|Kitty.*)"):                 "jl",
+	regexp.MustCompile("(?i)(Rye.*|Kitty.*)"):                 "rye",
 	regexp.MustCompile("(?i)Kayleigh.*"):                      "kd",
 	regexp.MustCompile("(?i)(KK.*|kek)"):                      "kk",
 	regexp.MustCompile("(?i)Bob.*"):                           "rj",
@@ -221,7 +229,7 @@ func tallyBatchActivity(batchN int64, features []geojson.Feature) error {
 		}
 	}
 
-	activityOutputFile := getActivityOutputFilepath(*flagBatchSize, batchN)
+	activityOutputFile := getActivityOutputFilepath(int64(len(features)), batchN)
 	if err := writeFileCreating(activityOutputFile, writeBuf); err != nil {
 		return err
 	}
@@ -262,15 +270,33 @@ func tallyCatLoc(catStates, catCountries map[string]map[string]uint64, catTimes 
 	var loc rgeo.Location
 	loc, err = rg.ReverseGeocode([]float64{lon, lat})
 	if err != nil {
+		// FIXME This happens a lot, weirdly. Check the ignored errors for commented context.
 		for _, ignore := range ignoreReverseGeocodeErrors {
-			if strings.Contains(err.Error(), ignore) {
-				// FIXME This happens a lot, weirdly. Check the ignored errors for commented context.
-				// log.Println("WARN: country not found", f.Properties["Name"], catTime.Format(time.RFC3339), lon, lat)
-				err = nil
+			if errors.Is(err, ignore) {
+				// debug := spew.Sdump(loc)
+				// log.Printf("WARN: country not found: %s %v %v %v\n%s\n",
+				// 	f.Properties["Name"], catTime.Format(time.RFC3339), lon, lat,
+				// 	debug)
+				atomic.AddUint32(&geocodeErrorCount, 1)
+
+				// write to file
+				b, _ := f.MarshalJSON()
+				fi, err := os.OpenFile(reverseGeocodeFailedFilepath, os.O_WRONLY|os.O_APPEND, 0644)
+				if err != nil {
+					if os.IsNotExist(err) {
+						os.Create(reverseGeocodeFailedFilepath)
+						fi, _ = os.OpenFile(reverseGeocodeFailedFilepath, os.O_WRONLY|os.O_APPEND, 0644)
+					}
+				}
+				wr := gzip.NewWriter(fi)
+				if _, err := wr.Write(b); err != nil {
+					return err
+				}
+				_ = wr.Close()
+				_ = fi.Close()
+
+				return nil
 			}
-		}
-		if err != nil {
-			return err
 		}
 	}
 	// Ideally this returns:
@@ -326,7 +352,7 @@ func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 	}
 
 	// writeBuf to file
-	stateOutputFile := getStateOutputFilepath(*flagBatchSize, batchN)
+	stateOutputFile := getStateOutputFilepath(int64(len(features)), batchN)
 	if err := writeFileCreating(stateOutputFile, writeBuf); err != nil {
 		return err
 	}
@@ -348,7 +374,7 @@ func tallyBatchLoc(batchN int64, features []geojson.Feature) error {
 	}
 
 	// writeBuf to file
-	countryOutputFile := getCountryOutputFilepath(*flagBatchSize, batchN)
+	countryOutputFile := getCountryOutputFilepath(int64(len(features)), batchN)
 	if err := writeFileCreating(countryOutputFile, writeBuf); err != nil {
 		return err
 	}
@@ -437,6 +463,7 @@ func main() {
 				if err := tallyBatch(w.batchNumber, w.lines); err != nil {
 					log.Fatalln(err)
 				}
+				atomic.AddUint32(&tracksCount, uint32(len(w.lines)))
 				workersWG.Done()
 			}
 		}()
@@ -476,4 +503,5 @@ readLoop:
 	}
 	workersWG.Wait()
 	close(workCh)
+	log.Printf("Done. Total tracks: %d. Ignored %d reverse geocode errors.\n", tracksCount, geocodeErrorCount)
 }
